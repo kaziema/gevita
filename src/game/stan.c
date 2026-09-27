@@ -3266,6 +3266,14 @@ void stanDetermineEOF(struct StanPrefixRecord *file /* canonically r */, s32 ori
             // Fake but required for matching.
             if (tile->tail.half);
             
+#if defined(__vita__)
+            if (((u8 *)newBase)[(tile->tail.half >> 0xc) & 0xf] == 0) {
+                /* Size-0 step would spin forever; log the tile and stop. */
+                osSyncPrintf("[stan] zero-size tile at %p (off 0x%x): %08x %08x\n", (void *)tile,
+                             (unsigned)((u8 *)tile - (u8 *)file), ((u32 *)tile)[0], ((u32 *)tile)[1]);
+                break;
+            }
+#endif
             tile = (StandTile *)((s32)tile
                 + (tileSizes = newBase)[(tile->tail.half >> 0xc) & 0xf]);
         } 

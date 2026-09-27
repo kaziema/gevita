@@ -98,7 +98,7 @@ static void gfx_sdl_init(const struct GfxWindowInitSettings *set) {
      * 960x544 here is the Vita's actual screen size, not a window size. */
     sceIoMkdir("ux0:data/GoldenEye007/shader_cache", 0777);
     vglSetParamBufferSize(6 * 1024 * 1024);
-    vglInitWithCustomThreshold(0, 960, 544, 4 * 1024 * 1024, 0, 0, 0, SCE_GXM_MULTISAMPLE_4X);
+    vglInitWithCustomThreshold(0, 960, 544, 32 * 1024 * 1024, 0, 0, 0, SCE_GXM_MULTISAMPLE_4X); // leave RAM for game thread stacks
     window_width = 960;
     window_height = 544;
 #endif
@@ -323,6 +323,14 @@ static void gfx_sdl_set_dimensions(uint32_t width, uint32_t height, int32_t posX
 static void gfx_sdl_get_dimensions(uint32_t* width, uint32_t* height, int32_t* posX, int32_t* posY) {
     SDL_GL_GetDrawableSize(wnd, static_cast<int*>((void*)width), static_cast<int*>((void*)height));
     SDL_GetWindowPosition(wnd, static_cast<int*>(posX), static_cast<int*>(posY));
+#if defined(__vita__)
+    static uint32_t lastW = 1, lastH = 1;
+    if (*width != lastW || *height != lastH) {
+        sysLogPrintf(LOG_INFO, "[video] SDL drawable %ux%u", (unsigned)*width, (unsigned)*height);
+        lastW = *width; lastH = *height;
+    }
+    if (*width == 0 || *height == 0) { *width = 960; *height = 544; } // fixed Vita screen
+#endif
 }
 
 static void gfx_sdl_handle_events(void) {

@@ -367,6 +367,10 @@ static void videoDrainWindowRequests(void)
         return;
     }
     winReqKind = 0;
+#if defined(__vita__)
+    /* Fixed 960x544 panel: window size / fullscreen changes only shrink the image. */
+    return;
+#endif
 
     if (kind == 1) {
         int w = winReqA, h = winReqB;
@@ -418,7 +422,16 @@ int videoInit(void)
 
     /* MSAA: snap the requested sample count down to a supported power of two. */
     gfx_msaa_level = cfgMSAA >= 8 ? 8 : cfgMSAA >= 4 ? 4 : cfgMSAA >= 2 ? 2 : 1;
+#if defined(__vita__)
+    gfx_msaa_level = 1; /* no multisample renderbuffers in vitaGL; it already MSAAs the screen */
+#endif
 
+#if defined(__vita__)
+    /* Always native size on Vita; ignore window/fullscreen values saved by older builds. */
+    cfgWinW = cfgWinH = 0;
+    cfgFullscreen = 0;
+    cfgWinMax = 0;
+#endif
     int winW = cfgWinW > 0 ? cfgWinW : 0;   /* 0 -> gfx_sdl2 auto-fits to the desktop */
     int winH = cfgWinH > 0 ? cfgWinH : 0;
     int havePos = (cfgWinX >= 0 && cfgWinY >= 0);

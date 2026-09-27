@@ -742,6 +742,7 @@ unsigned inputComputePad(int idx, signed char *stick_x, signed char *stick_y)
     /* D194/D238: self-correcting every poll -- cheap (plain field writes,
      * see options.c cur_player_set_control_type), and re-asserts itself if
      * anything else ever calls the setter (menu, save load) in between. */
+    /* NOTE: this locks the watch-menu Control Style option (kept locked on purpose for now). */
     if (idx == 0 && g_CurrentPlayer != NULL) {
         int wantSolitare = naturalPitchMode ? CONTROLLER_CONFIG_SOLITARE_ : CONTROLLER_CONFIG_HONEY_;
         if (cur_player_get_control_type() != wantSolitare) {
@@ -968,7 +969,7 @@ unsigned inputComputePad(int idx, signed char *stick_x, signed char *stick_y)
                  * pointer is placed. */
                 double loH = MENU_CURSOR_LO, hiH = MENU_CURSOR_HI_H;
                 double loV = MENU_CURSOR_LO, hiV = MENU_CURSOR_HI_V;
-                {
+                if (g_CurrentPlayer) { /* no player yet on early front-end screens */
                     double sw = getPlayer_c_screenwidth(),  sh = getPlayer_c_screenheight();
                     double sl = getPlayer_c_screenleft(),   st = getPlayer_c_screentop();
                     if (sw > 200.0 && sw < 2000.0 && sh > 150.0 && sh < 2000.0) {

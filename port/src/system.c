@@ -89,12 +89,17 @@ void sysLogPrintf(enum LogLevel level, const char *fmt, ...)
 {
     static const char *tags[] = { "ERROR", "WARN ", "NOTE ", "INFO ", "DEBUG" };
     va_list ap;
+    char line[2048];
+    int n;
     if ((int)level >= 5) level = LOG_DEBUG;
-    fprintf(stderr, "[%s] ", tags[level]);
+    /* One write per line so lines from different threads don't interleave. */
+    n = snprintf(line, sizeof(line), "[%s] ", tags[level]);
     va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
+    n += vsnprintf(line + n, sizeof(line) - (size_t)n - 1, fmt, ap);
     va_end(ap);
-    fprintf(stderr, "\n");
+    if (n > (int)sizeof(line) - 2) n = (int)sizeof(line) - 2;
+    line[n++] = '\n';
+    fwrite(line, 1, (size_t)n, stderr);
 }
 
 void sysFatalError(const char *fmt, ...)

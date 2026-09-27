@@ -28,6 +28,7 @@ extern int   snprintf(char *str, size_t maxsize, const char *format, ...);
 #include "system.h"
 #include "fs.h"
 #include "pccg.h"
+#include "romdata.h" /* romdataHostToCart */
 
 /* Order matters: <ultra64.h> must finish before bondtypes.h (see
  * pcmodels.c's comment -- same PR/ucode.h anchor requirement). */
@@ -205,7 +206,7 @@ void pccgPatchTable(void)
             if (file_resource_table[t].filename &&
                 strcmp(file_resource_table[t].filename, r->name) == 0) {
                 file_resource_table[t].hw_address =
-                    (u8 *)(s_base + r->offset);
+                    (u8 *)(uintptr_t)romdataHostToCart(s_base + r->offset);
                 resource_lookup_data_array[t].rom_size = r->size;
                 hit++;
                 break;

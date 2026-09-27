@@ -1349,6 +1349,8 @@ static void gfx_matrix_mul(float res[4][4], const float a[4][4], const float b[4
     memcpy(res, tmp, sizeof(tmp));
 }
 
+static inline bool fast3d_ptr_ok(const void *p);
+
 static void gfx_sp_matrix(uint8_t parameters, const int32_t* addr) {
     float matrix[4][4];
 
@@ -1360,8 +1362,7 @@ static void gfx_sp_matrix(uint8_t parameters, const int32_t* addr) {
      * crash the menu transition, substitute identity for an unmapped source
      * (the model draws with the wrong transform - already a parked D75
      * cosmetic - but the screen and its "Next" -> menu path work). */
-    const bool addr_bad = ((uintptr_t)addr < 0x10000 ||
-                           (uintptr_t)addr >= 0x0000800000000000ULL);
+    const bool addr_bad = !fast3d_ptr_ok(addr);
 
     if (addr_bad) {
         memset(matrix, 0, sizeof(matrix));
@@ -1441,7 +1442,23 @@ static void gfx_adjust_width_height_for_scale(uint32_t& width, uint32_t& height)
  * over one bad menu model is the wrong trade for a breadth-first port. */
 static inline bool fast3d_ptr_ok(const void *p) {
     uintptr_t v = (uintptr_t)p;
+#if defined(__vita__)
+    /* Vita user RAM only; log each distinct reject once so bad addresses name themselves. */
+    if (v >= 0x81000000u && v < 0xA0000000u) return true;
+    {
+        static uintptr_t seen[32];
+        static int nseen = 0;
+        int known = 0;
+        for (int i = 0; i < nseen; i++) known |= (seen[i] == v);
+        if (!known && nseen < 32) {
+            seen[nseen++] = v;
+            sysLogPrintf(LOG_ERROR, "[fast3d] rejected pointer %p (skipped)", (void *)v);
+        }
+    }
+    return false;
+#else
     return v >= 0x10000 && v < 0x0000800000000000ULL;
+#endif
 }
 
 static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx* vertices) {
@@ -2739,7 +2756,14 @@ static void gfx_sp_moveword(uint8_t index, uint16_t offset, uintptr_t data) {
         case G_MW_SEGMENT:
             // GE registers segment bases as OS_K0_TO_PHYSICAL(ptr); store the
             // live host pointer so seg_addr() resolves seg+offset correctly.
+#if defined(__vita__)
+            {
+                extern uintptr_t g_vitaDramBase; // no 0x80000000 mirror on Vita
+                segmentPointers[(offset >> 2) & 0xff] = (data < 0x800000) ? (data + g_vitaDramBase) : data;
+            }
+#else
             segmentPointers[(offset >> 2) & 0xff] = (data < 0x800000) ? (data + 0x80000000) : data;
+#endif
             break;
     }
 }
@@ -3341,10 +3365,24 @@ static inline void *seg_addr(uintptr_t w1) {
         extern uintptr_t g_vitaCartBase; // port/src/romdata.c
         return (void *)(g_vitaCartBase + (w1 - 0x10000000));
     }
-    // KSEG0 form (offset | 0x80000000, e.g. title.c gun barrel): no mirror on Vita.
-    if (w1 >= 0x80000000 && w1 < 0x80800000) {
+    // KSEG0/KSEG1 form (offset | 0x80000000 / 0xA0000000): no mirror on Vita.
+    if ((w1 >= 0x80000000 && w1 < 0x80800000) || (w1 >= 0xA0000000 && w1 < 0xA0800000)) {
         extern uintptr_t g_vitaDramBase;
-        return (void *)(g_vitaDramBase + (w1 - 0x80000000));
+        return (void *)(g_vitaDramBase + (w1 & 0x007FFFFF));
+    }
+    // Anything else outside Vita user RAM is a bad address: log it, return an empty DL/buffer.
+    if (w1 < 0x81000000 || w1 >= 0xA0000000) {
+        static uint32_t seen[32];
+        static int nseen = 0;
+        static Gfx safe[1024]; // 16 KB of zeros; slot 0 becomes G_ENDDL
+        safe[0].words.w0 = (uintptr_t)G_ENDDL << 24;
+        int known = 0;
+        for (int i = 0; i < nseen; i++) known |= (seen[i] == (uint32_t)w1);
+        if (!known && nseen < 32) {
+            seen[nseen++] = (uint32_t)w1;
+            sysLogPrintf(LOG_ERROR, "[segaddr] unresolved w1=0x%08X (seg %u) -> empty buffer", (unsigned)w1, (unsigned)((w1 >> 24) & 0xF));
+        }
+        return (void *)safe;
     }
 #endif
     // D131: a GBI DL built by game code can reference a COMPILED symbol via

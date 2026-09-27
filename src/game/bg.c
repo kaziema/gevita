@@ -339,7 +339,12 @@ void sub_GAME_7F0B37EC(void) {
     u32 masked;
 
     ptr = (u8 *)specialportalarray;
+#ifdef PORT
+    /* N64 linker put g_BgCurrentRoom right after the array; not guaranteed here. */
+    end = (u8 *)specialportalarray + sizeof(specialportalarray);
+#else
     end = (u8 *)&g_BgCurrentRoom;
+#endif
 
     do {
         if (levelentry_index == *ptr++) {
@@ -825,6 +830,12 @@ s32 getPointTableBinCount(s32 room)
 /*
  * Address: 0x7F0B4124
 */
+#if defined(__vita__)
+#define BGSTEP(name) osSyncPrintf("[lvl] bg %s\n", name)
+#else
+#define BGSTEP(name) do { } while (0)
+#endif
+
 void load_bg_file(LEVEL_INDEX levelid)
 {
     typedef struct bg_envdata_entry_local {
@@ -865,13 +876,18 @@ void load_bg_file(LEVEL_INDEX levelid)
     size = (((((u32) ptr_bgdata_room_fileposition_list[1].pPointTableBin) & 0x00ffffff) - 1) | 0xf) + 1;
  
     ptr_bg_data = (s32) mempAllocBytesInBank(size, 4);
+    BGSTEP("obLoadBGFileBytesAtOffset");
     obLoadBGFileBytesAtOffset(levelinfotable[levelentry_index].bg_seg_filename, (u8 *) ptr_bg_data, 0, size);
  
+    BGSTEP("");
     gptr_stan = (s32) _fileNameLoadToBank(levelinfotable[levelentry_index].bg_stan_filename, 2, 0, 4);
  
+    BGSTEP("stanDetermineEOF");
     stanDetermineEOF((struct StanPrefixRecord *) gptr_stan, 0, (u8 *) gptr_stan);
+    BGSTEP("stanLoadFile");
     stanLoadFile((struct StanPrefixRecord *) gptr_stan);
  
+    BGSTEP("sub_GAME_7F0B4810");
     sub_GAME_7F0B4810(levelinfotable[levelentry_index].levelscale);
     setLevelScale(levelinfotable[levelentry_index].levelscale);
     setDebugCameraScale(levelinfotable[levelentry_index].levelscale);
@@ -1001,6 +1017,7 @@ void load_bg_file(LEVEL_INDEX levelid)
             g_BgRoomInfo[i].cur_room_totalsize = -1;
         }
  
+        BGSTEP("initializeRoomData");
         initializeRoomData();
  
         for (i = 1; i < g_MaxNumRooms; i++)
@@ -2689,6 +2706,15 @@ s32 bgCheckIfRoomModelNeedsLoad(s32 roomID)
 *
 * Address: 7F0B6368
 */
+#if defined(__vita__)
+/* First load of each room only; a room crash names the room and the step. */
+static u8 s_roomLogged[256];
+#define ROOMLOG(step, v) do { if (roomID < 256 && s_roomLogged[roomID] < 6) { s_roomLogged[roomID]++; \
+    osSyncPrintf("[room] %d %s %d data=%p alloc=0x%x\n", (int)roomID, step, (int)(v), (void *)data, (unsigned)allocsize); } } while (0)
+#else
+#define ROOMLOG(step, v) do { } while (0)
+#endif
+
 void bgLoadRoomModelData(s32 roomID)
 {
     /*
@@ -2736,7 +2762,9 @@ void bgLoadRoomModelData(s32 roomID)
 
     if (g_BgRoomInfo[roomID].csize_point_index_binary)
     {
+        ROOMLOG("vtx", g_BgRoomInfo[roomID].csize_point_index_binary);
         result = bgLoadRoomVtxData(roomID, data, allocsize);
+        ROOMLOG("vtx done", result);
 
         if (result >= 0)
         {
@@ -2755,7 +2783,9 @@ void bgLoadRoomModelData(s32 roomID)
      */
     if (g_BgRoomInfo[roomID].csize_primary_DL_binary)
     {
+        ROOMLOG("pri", g_BgRoomInfo[roomID].csize_primary_DL_binary);
         result = bgLoadRoomPrimaryGdl(roomID, data + used, allocsize - used);
+        ROOMLOG("pri done", result);
 
         if (result >= 0)
         {
@@ -2768,7 +2798,9 @@ void bgLoadRoomModelData(s32 roomID)
      */
     if (g_BgRoomInfo[roomID].csize_secondary_DL_binary)
     {
+        ROOMLOG("sec", g_BgRoomInfo[roomID].csize_secondary_DL_binary);
         result = bgLoadRoomSecondaryGdl(roomID, data + used, allocsize - used);
+        ROOMLOG("sec done", result);
 
         if (result > 0)
         {
@@ -5937,8 +5969,14 @@ void sub_GAME_7F0BA2D4(coord3d *bbmin, coord3d *bbmax, s32 *room_list, s32 *coun
                         goto next_portal;
                     }
                     
+#ifdef PORT
+                    /* N64 read three adjacent s32 globals as one coord3d; set the same FLT_MAX / -FLT_MAX values directly. */
+                    portal_min.f[0] = portal_min.f[1] = portal_min.f[2] = 3.40282347e38f;
+                    portal_max.f[0] = portal_max.f[1] = portal_max.f[2] = -3.40282347e38f;
+#else
                     portal_min = *(coord3d *) &D_80044904;
                     portal_max = *(coord3d *) &D_80044910;
+#endif
                     portal_pts = g_BgPortals[portal_idx].offset_portal;
                     
                     for (j = 0; j < portal_pts->numPoints; j++)

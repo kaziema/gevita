@@ -30,6 +30,7 @@ extern int   snprintf(char *str, size_t maxsize, const char *format, ...);
 #include "system.h"
 #include "fs.h"
 #include "pcmodels.h"
+#include "romdata.h" /* romdataHostToCart */
 
 /* Order matters: <ultra64.h> must finish first — its PR/ucode.h anchor pulls
  * in pc_protos.h, which itself includes game/ob.h. Including ob.h before
@@ -214,7 +215,7 @@ void pcmodelsPatchTable(void)
             if (file_resource_table[t].filename &&
                 strcmp(file_resource_table[t].filename, r->name) == 0) {
                 file_resource_table[t].hw_address =
-                    (u8 *)(s_base + r->offset);
+                    (u8 *)(uintptr_t)romdataHostToCart(s_base + r->offset);
                 resource_lookup_data_array[t].rom_size = r->size;
                 hit++;
                 break;

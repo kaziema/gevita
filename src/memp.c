@@ -169,11 +169,21 @@ void *mempAllocBytesInBank(u32 bytes, u8 poolnum)
 
     if (pool->pos == NULL)
     {
+#if defined(__vita__)
+        osSyncPrintf("[memp] %s: pool=%d want=0x%x pos=%p end=%p perm pos=%p end=%p (hanging)\n", "pool not set up",
+                     (int)poolnum, (unsigned)bytes, (void *)pool->pos, (void *)pool->end,
+                     (void *)g_mempPools[MEMPOOL_PERMANENT].pos, (void *)g_mempPools[MEMPOOL_PERMANENT].end);
+#endif
         while (1);
     }
 
     if (pool->pos > pool->end)
     {
+#if defined(__vita__)
+        osSyncPrintf("[memp] %s: pool=%d want=0x%x pos=%p end=%p perm pos=%p end=%p (hanging)\n", "pool overrun",
+                     (int)poolnum, (unsigned)bytes, (void *)pool->pos, (void *)pool->end,
+                     (void *)g_mempPools[MEMPOOL_PERMANENT].pos, (void *)g_mempPools[MEMPOOL_PERMANENT].end);
+#endif
         nulled_mempLoopAllMemBanks();
 
         while (1);
@@ -199,6 +209,11 @@ void *mempAllocBytesInBank(u32 bytes, u8 poolnum)
             return mempAllocBytesInBank(bytes, MEMPOOL_PERMANENT);
         }
 
+#if defined(__vita__)
+        osSyncPrintf("[memp] %s: pool=%d want=0x%x pos=%p end=%p perm pos=%p end=%p (hanging)\n", "out of memory",
+                     (int)poolnum, (unsigned)bytes, (void *)pool->pos, (void *)pool->end,
+                     (void *)g_mempPools[MEMPOOL_PERMANENT].pos, (void *)g_mempPools[MEMPOOL_PERMANENT].end);
+#endif
         nulled_mempLoopAllMemBanks();
 
         while (1);

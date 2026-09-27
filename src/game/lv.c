@@ -246,6 +246,13 @@ void sub_GAME_7F0BD8FC(s32 arg0)
     D_800483C0 = arg0;
 }
 
+#if defined(__vita__)
+/* One line per stage-load step: a hang or crash names the step it was in. */
+#define LVSTEP(name) osSyncPrintf("[lvl] stage=%d %s\n", (int)g_CurrentStageToLoad, name)
+#else
+#define LVSTEP(name) do { } while (0)
+#endif
+
 void lvInit(void)
 {
     s32 size;
@@ -466,13 +473,17 @@ void lvlStageLoad(s32 stage)
             }
         }
 
+        LVSTEP("load_bg_file");
         load_bg_file(g_CurrentStageToLoad);
+        LVSTEP("skySetStageNum");
         skySetStageNum(g_CurrentStageToLoad);
 
         // HACK: This method call is wrong. The function takes one argument, but the asm calls it without
         // any arguments here.
+        LVSTEP("init_watch_at_start_of_stage");
         init_watch_at_start_of_stage();
 
+        LVSTEP("sub_GAME_7F0C11FC");
         sub_GAME_7F0C11FC(stage);
 
         for (i=0; i<4; i++)
@@ -534,19 +545,29 @@ void lvlStageLoad(s32 stage)
         }
     }
 
+    LVSTEP("something_with_stage_objectives");
     something_with_stage_objectives();
     mpwatchUnpauseGame();
+    LVSTEP("sub_GAME_7F09B820");
     sub_GAME_7F09B820();
+    LVSTEP("initModelHitEntryFreeList");
     initModelHitEntryFreeList();
     modelmgrResetSlotCounts();
+    LVSTEP("init_load_objpos_table");
     init_load_objpos_table();
+    LVSTEP("reinit_between_menus");
     reinit_between_menus();
     init_sound_effects_registers();
+    LVSTEP("init_guards");
     init_guards();
+    LVSTEP("bodiesReset");
     bodiesReset(stage);
+    LVSTEP("proplvreset2");
     proplvreset2(stage);
+    LVSTEP("alloc_explosion_smoke_casing_scorch_impact_buffers");
     alloc_explosion_smoke_casing_scorch_impact_buffers();
     alloc_shattered_window_pieces();
+    LVSTEP("sub_GAME_7F007290");
     sub_GAME_7F007290();
     initCheatTextBuffer();
 
@@ -558,7 +579,9 @@ void lvlStageLoad(s32 stage)
     {
         s32 s0;
 
+        LVSTEP("init_path_table_links");
         init_path_table_links();
+        LVSTEP("init_ejected_cartridges");
         init_ejected_cartridges();
 
         for (s0 = 0; s0 < getPlayerCount(); s0++)
@@ -566,8 +589,11 @@ void lvlStageLoad(s32 stage)
             set_cur_player(s0);
             reinit_gunheld_totaltime();
             init_player_BONDdata_stats();
+            LVSTEP("init_player_BONDdata");
             init_player_BONDdata();
+            LVSTEP("bondviewLoadSetupIntroSection");
             bondviewLoadSetupIntroSection();
+            LVSTEP("bondviewPlayerBeginLife");
             bondviewPlayerBeginLife();
             sets_a_bunch_of_BONDdata_values_to_default();
             disableOnscreenCheatText();
@@ -582,6 +608,7 @@ void lvlStageLoad(s32 stage)
      */
     modelmgrSetLevelResetting(FALSE);
     
+    LVSTEP("zbufDeallocate");
     zbufDeallocate();
     viSetVideoMode(MD_NORMAL);
     D_80048368 = 1.0f;

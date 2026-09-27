@@ -118,8 +118,10 @@ struct Row {
 };
 
 static struct Row rows[] = {
+#if !defined(__vita__) /* fixed 960x544 panel on Vita */
     { "Video.Fullscreen",         "Fullscreen",       ROW_TOGGLE, 1,    kOnOff,     0, 0, 0,   0,0,0,0,0 },
     { "__Resolution",             "Resolution",       ROW_RES,    0,    NULL,       0, 0, 0,   0,0,0,0,0 },
+#endif
     { "Video.VSync",              "VSync",            ROW_TOGGLE, 1,    kOnOff,     0, 0, 0,   0,0,0,0,0 },
     { "Video.FpsCap",             "Frame cap",        ROW_FPSCAP, 0,    NULL,       0, 0, 0,   0,0,0,0,0 },
     { "Video.MSAA",               "MSAA",             ROW_MSAA,   0,    NULL,       1, 0, 0,   0,0,0,0,0 },

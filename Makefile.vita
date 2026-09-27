@@ -97,7 +97,7 @@ SRC_FAST3D_CPP := $(shell find port/fast3d -maxdepth 1 -name '*.cpp')
 SRC_PORT_CXX := $(shell find port/src -name '*.cpp')
 
 SRC_ROMASSETS := port/src/romassets_$(ASSET_REGION).s
-SRC_DRAM_SYMS := port/src/dram_syms.s
+# dram_syms.s not built: its fixed PC addresses are real variables in dram.c here.
 
 SRC_LIBAUDIO          := $(shell find src/libultra/audio -name '*.c')
 SRC_LIBULTRARE_AUDIO  := $(shell find src/libultrare/audio -name '*.c')
@@ -118,7 +118,7 @@ CFILES := $(SRC_GAME) $(SRC_PORT_C) $(SRC_LIBAUDIO) $(SRC_LIBULTRARE_AUDIO) \
 	$(SRC_LIBULTRARE_DATA) $(SRC_LIBULTRARE_LIBC) $(SRC_GU) $(SRC_ASSETS) \
 	$(SRC_ENGINE)
 CPPFILES := $(SRC_PORT_CXX) $(SRC_FAST3D_CPP)
-SFILES := $(SRC_ROMASSETS) $(SRC_DRAM_SYMS)
+SFILES := $(SRC_ROMASSETS)
 
 OBJS := $(CFILES:.c=.o) $(CPPFILES:.cpp=.o) $(SFILES:.s=.o)
 
@@ -140,7 +140,7 @@ COMMON_FLAGS := -g -Wl,-q,--allow-multiple-definition -O2 -fno-strict-aliasing -
 	-fno-stack-protector -fno-omit-frame-pointer \
 	-include versioninfo.h \
 	$(foreach dir,$(INCLUDES),-I$(dir)) \
-	-D__vita__ -DNDEBUG \
+	-D__vita__ -DNDEBUG -fno-short-enums \
 	-DPORT=1 -D_LANGUAGE_C=1 -DAVOID_UB=1 -DPAL=0 $(REGION_DEFS) \
 	-Wall -Wno-address -Wno-misleading-indentation -Wno-missing-braces \
 	-Wno-multichar -Wno-tautological-compare -Wno-unused-but-set-variable \

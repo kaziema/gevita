@@ -34,8 +34,10 @@
 /* No fixed base on Vita — g_vitaDramBase is runtime (port/src/dram.c). */
 #        include <stdint.h>
 extern uintptr_t g_vitaDramBase;
+/* DRAM pointers -> DRAM offset; anything else passes through (and is logged) instead of wrapping. */
+u32 vitaK0ToPhysical(const void *p);
 #        undef OS_K0_TO_PHYSICAL
-#        define OS_K0_TO_PHYSICAL(x) ((u32)((char *)(x) - g_vitaDramBase))
+#        define OS_K0_TO_PHYSICAL(x) vitaK0ToPhysical((const void *)(x))
 #    else
 #        undef OS_K0_TO_PHYSICAL
 #        define OS_K0_TO_PHYSICAL(x) ((u32)((char *)(x) - 0x70000000))

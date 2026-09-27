@@ -84,6 +84,10 @@ extern u32 D_80035CC0;
 extern u32 D_80035D00;
 extern u32 D_80035D04[];
 extern u32 D_80035EA4;
+#ifdef PORT
+extern u32 D_80035EA8;
+extern u32 D_80035EAC;
+#endif
 extern u32 watchControllerButtonBases[];
 extern GunModelFileRecord gitem_structs[];
 extern struct gun_trigger_state g_ZeroTriggerState;
@@ -5214,7 +5218,14 @@ void sub_GAME_7F068508(GUNHAND handnum, f32 floor_y_pos)
         return;
     }
  
+#ifdef PORT
+    /* N64 read D_80035EA4/EA8/EAC as one coord3d; don't rely on global layout. */
+    rot.f[0] = *(f32 *)&D_80035EA4;
+    rot.f[1] = *(f32 *)&D_80035EA8;
+    rot.f[2] = *(f32 *)&D_80035EAC;
+#else
     rot = *((coord3d *) (&D_80035EA4));
+#endif
     casing->floor_y_pos = floor_y_pos;
  
     if (((((weaponid == ITEM_WPPK) || (weaponid == ITEM_WPPKSIL)) || (weaponid == ITEM_TT33)) || (weaponid == ITEM_SILVERWPPK)) || (weaponid == ITEM_GOLDWPPK))
@@ -5531,7 +5542,14 @@ void sub_GAME_7F068508(GUNHAND handnum, f32 floor_y_pos)
         return;
     }
  
+#ifdef PORT
+    /* N64 read D_80035EA4/EA8/EAC as one coord3d; don't rely on global layout. */
+    rot.f[0] = *(f32 *)&D_80035EA4;
+    rot.f[1] = *(f32 *)&D_80035EA8;
+    rot.f[2] = *(f32 *)&D_80035EAC;
+#else
     rot = *((coord3d *) (&D_80035EA4));
+#endif
     casing->floor_y_pos = floor_y_pos;
  
     if (((((weaponid == ITEM_WPPK) || (weaponid == ITEM_WPPKSIL)) || (weaponid == ITEM_TT33)) || (weaponid == ITEM_SILVERWPPK)) || (weaponid == ITEM_GOLDWPPK))

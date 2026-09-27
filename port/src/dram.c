@@ -69,8 +69,22 @@
 /* No fixed-address mapping on Vita. One view, wherever the kernel puts it. */
 uintptr_t g_vitaDramBase;
 
-extern u32 *_bssSegmentEnd;
-extern char (*animations_frame_buffer)[0x2D0];
+/* Real variables on Vita; dram_syms.s pins them to PC-only fixed addresses. */
+u8 (*cfb_16)[SCREEN_WIDTH * SCREEN_HEIGHT * 2];
+u32 *_bssSegmentEnd;
+char (*animations_frame_buffer)[0x2D0];
+
+u32 vitaK0ToPhysical(const void *p)
+{
+    static int nLogged = 0;
+    uintptr_t a = (uintptr_t)p;
+    if (a - g_vitaDramBase < DRAM_SIZE)
+        return (u32)(a - g_vitaDramBase);
+    if (a && nLogged++ < 32)
+        sysLogPrintf(LOG_WARNING, "[k0phys] non-DRAM pointer %p passed through (caller %p)",
+                     p, __builtin_return_address(0));
+    return (u32)a;
+}
 #endif
 
 void *dramReserve(void)

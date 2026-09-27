@@ -46,6 +46,20 @@ void load_resource(u8 *ptrdata, s32 bytes,  fileentry *srcfile,  resource_lookup
     u8  buffer[0x2100];
     s32 unused;
 
+#if defined(__vita__)
+    {
+        /* First load of each file, so a crash during a load names the file. */
+        static u8 logged[1024];
+        u32 idx = (u32)srcfile->index;
+        if (idx < sizeof(logged) && !logged[idx]) {
+            logged[idx] = 1;
+            osSyncPrintf("[file] %s idx=%d hw=%p rom=0x%x dst=%p cap=0x%x\n",
+                         srcfile->filename ? srcfile->filename : "?", (int)srcfile->index,
+                         (void *)srcfile->hw_address, (unsigned)lookupdata->rom_size,
+                         (void *)ptrdata, (unsigned)bytes);
+        }
+    }
+#endif
 
     if (bytes == 0)
     {

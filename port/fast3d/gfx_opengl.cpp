@@ -15,6 +15,8 @@
 #include <PR/gbi.h>
 
 #if defined(__vita__)
+#include <string.h>
+#include <malloc.h>
 #include "vita_gl_compat.h"
 #else
 #include "glad/glad.h"
@@ -37,6 +39,7 @@ struct ShaderProgram {
     GLint frame_count_location;
     GLint noise_scale_location;
     GLint three_point_filter_locations[2];
+    GLint tex_size_locations[2]; /* Vita: uTexSize0/1, vitaGL has no textureSize() */
 };
 
 struct Framebuffer {
@@ -97,6 +100,38 @@ static void gfx_opengl_vertex_array_set_attribs(struct ShaderProgram* prg) {
     }
 }
 
+#if defined(__vita__)
+/* Stock vitaGL lacks GLSL textureSize(); track sizes and feed them as uniforms. */
+static std::unordered_map<GLuint, std::pair<uint32_t, uint32_t>> s_texSizes;
+static GLuint s_boundTex[2];
+static uint32_t s_texW[2] = { 1, 1 }, s_texH[2] = { 1, 1 };
+static int s_curTile = 0;
+static struct ShaderProgram* s_curPrg = nullptr;
+
+/* Shader being built right now (0 = none) and since when; the kernel heartbeat reads these. */
+extern "C" volatile int g_glCompileShader;
+extern "C" volatile uint64_t g_glCompileSinceUs;
+volatile int g_glCompileShader = 0;
+volatile uint64_t g_glCompileSinceUs = 0;
+
+/* Remove the first exact occurrence of line from buf. */
+static void vitaStripLine(char* buf, size_t* len, const char* line) {
+    char* p = strstr(buf, line);
+    if (!p) return;
+    size_t n = strlen(line);
+    memmove(p, p + n, strlen(p + n) + 1);
+    *len -= n;
+}
+
+static void vitaSetTexSizeUniforms(void) {
+    if (!s_curPrg) return;
+    for (int i = 0; i < 2; i++) {
+        if (s_curPrg->tex_size_locations[i] >= 0)
+            glUniform2f(s_curPrg->tex_size_locations[i], (float)s_texW[i], (float)s_texH[i]);
+    }
+}
+#endif
+
 static void gfx_opengl_set_uniforms(struct ShaderProgram* prg) {
     if (prg->frame_count_location >= 0) {
         glUniform1i(prg->frame_count_location, frame_count);
@@ -125,6 +160,9 @@ static void gfx_opengl_unload_shader(struct ShaderProgram* old_prg) {
 static void gfx_opengl_load_shader(struct ShaderProgram* new_prg) {
     // if (!new_prg) return;
     glUseProgram(new_prg->opengl_program_id);
+#if defined(__vita__)
+    s_curPrg = new_prg;
+#endif
     gfx_opengl_vertex_array_set_attribs(new_prg);
     gfx_opengl_set_uniforms(new_prg);
 }
@@ -324,7 +362,11 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     append_line(vs_buf, &vs_len, "    gl_Position = aVtxPos;");
     if (!GLAD_GL_ARB_depth_clamp) {
         // HACK: workaround for no GL_DEPTH_CLAMP
+#if defined(__vita__)
+        append_line(vs_buf, &vs_len, "    gl_Position.z *= 0.3;"); /* no GLSL ES 1.0 'f' suffix */
+#else
         append_line(vs_buf, &vs_len, "    gl_Position.z *= 0.3f;");
+#endif
     }
     append_line(vs_buf, &vs_len, "}");
 
@@ -348,7 +390,12 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
 
     // Reference approach to color wrapping as per GLideN64
     // Return wrapped value of x in interval [low, high)
+#if defined(__vita__)
+    /* vitaGL maps mod() to CG fmod(), which differs for negatives; spell out GLSL mod. */
+    append_line(fs_buf, &fs_len, "#define WRAP(x, low, high) ((x) - ((high)-(low)) * floor(((x)-(low)) / ((high)-(low))))");
+#else
     append_line(fs_buf, &fs_len, "#define WRAP(x, low, high) mod((x)-(low), (high)-(low)) + (low)");
+#endif
 
     append_line(fs_buf, &fs_len, "#define TEX_OFFSET(tex, uv, texSize, off) SAMPLE_TEX(tex, uv - (off)/texSize)");
 
@@ -373,6 +420,11 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
         fs_len += sprintf(fs_buf + fs_len, "INPUT vec%d vInput%d;\n", cc_features.opt_alpha ? 4 : 3, i + 1);
     }
 
+#if defined(__vita__)
+    for (int i = 0; i < 2; i++)
+        if (cc_features.used_textures[i])
+            fs_len += sprintf(fs_buf + fs_len, "uniform vec2 uTexSize%d;\n", i);
+#endif
     if (cc_features.used_textures[0]) {
         append_line(fs_buf, &fs_len, "uniform sampler2D uTex0;");
         if (current_filter_mode == FILTER_THREE_POINT)
@@ -384,13 +436,25 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
             append_line(fs_buf, &fs_len, "uniform int three_point_filter1;");
     }
 
-    append_line(fs_buf, &fs_len, "uniform int frame_count;");
-    append_line(fs_buf, &fs_len, "uniform float noise_scale;");
+    bool needs_noise = true;
+#if defined(__vita__)
+    /* Dead noise code still costs SceShaccCg time; emit it only when referenced. */
+    needs_noise = cc_features.opt_noise;
+    for (int c = 0; c < 2; c++)
+        for (int a = 0; a < 2; a++)
+            for (int k = 0; k < 4; k++)
+                if (cc_features.c[c][a][k] == SHADER_NOISE)
+                    needs_noise = true;
+#endif
+    if (needs_noise) {
+        append_line(fs_buf, &fs_len, "uniform int frame_count;");
+        append_line(fs_buf, &fs_len, "uniform float noise_scale;");
 
-    append_line(fs_buf, &fs_len, "float random(in vec3 value) {");
-    append_line(fs_buf, &fs_len, "    float random = dot(sin(value), vec3(12.9898, 78.233, 37.719));");
-    append_line(fs_buf, &fs_len, "    return fract(sin(random) * 143758.5453);");
-    append_line(fs_buf, &fs_len, "}");
+        append_line(fs_buf, &fs_len, "float random(in vec3 value) {");
+        append_line(fs_buf, &fs_len, "    float random = dot(sin(value), vec3(12.9898, 78.233, 37.719));");
+        append_line(fs_buf, &fs_len, "    return fract(sin(random) * 143758.5453);");
+        append_line(fs_buf, &fs_len, "}");
+    }
 
     if (current_filter_mode == FILTER_THREE_POINT) {
         append_line(fs_buf, &fs_len, "vec4 filter3point(in sampler2D tex, in vec2 texCoord, in vec2 texSize) {");
@@ -450,7 +514,11 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
         if (cc_features.used_textures[i]) {
             bool s = cc_features.clamp[i][0], t = cc_features.clamp[i][1];
 
+#if defined(__vita__)
+            fs_len += sprintf(fs_buf + fs_len, "    vec2 texSize%d = uTexSize%d;\n", i, i);
+#else
             fs_len += sprintf(fs_buf + fs_len, "    vec2 texSize%d = vec2(textureSize(uTex%d, 0));\n", i, i);
+#endif
 
             if (!s && !t) {
                 fs_len += sprintf(fs_buf + fs_len, "    vec2 vTexCoordAdj%d = vTexCoord%d;\n", i, i);
@@ -564,10 +632,51 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     vs_buf[vs_len] = '\0';
     fs_buf[fs_len] = '\0';
 
+#if defined(__vita__)
+    /* Drop combiner inputs the FS never reads (shader #20 hung SceShaccCg with one). */
+    for (int i = 0; i < cc_features.num_inputs; i++) {
+        char name[16], line[64];
+        int uses = 0;
+        const char* p = fs_buf;
+        sprintf(name, "vInput%d", i + 1);
+        while ((p = strstr(p, name)) != NULL) { uses++; p += strlen(name); }
+        if (uses > 1) continue;
+        int n = cc_features.opt_alpha ? 4 : 3;
+        sprintf(line, "INPUT vec%d aInput%d;\n", n, i + 1);   vitaStripLine(vs_buf, &vs_len, line);
+        sprintf(line, "OUTPUT vec%d vInput%d;\n", n, i + 1);  vitaStripLine(vs_buf, &vs_len, line);
+        sprintf(line, "    vInput%d = aInput%d;\n", i + 1, i + 1); vitaStripLine(vs_buf, &vs_len, line);
+        sprintf(line, "INPUT vec%d vInput%d;\n", n, i + 1);   vitaStripLine(fs_buf, &fs_len, line);
+        sysLogPrintf(LOG_INFO, "[shader] id %llx/%x: dropped unused vInput%d",
+                     (unsigned long long)shader_id0, shader_id1, i + 1);
+    }
+#endif
+
     const GLchar* sources[2] = { vs_buf, fs_buf };
     const GLint lengths[2] = { (GLint)vs_len, (GLint)fs_len };
     GLint success;
 
+    static int nShaders = 0;
+    {
+        /* If vitaGL dies inside its GLSL translator, the last one of these names the shader. */
+        if (++nShaders <= 64) {
+#if defined(__vita__)
+            struct mallinfo mi = mallinfo();
+            sysLogPrintf(LOG_INFO, "[shader] #%d compiling id %llx/%x (vs %d B, fs %d B) heap used %u KB, vgl ram free %u KB",
+                         nShaders, (unsigned long long)shader_id0, shader_id1, (int)vs_len, (int)fs_len,
+                         (unsigned)(mi.uordblks / 1024), (unsigned)(vglMemFree(VGL_MEM_RAM) / 1024));
+            fprintf(stderr, "---- vs #%d ----\n%s---- fs #%d ----\n%s---- end #%d ----\n",
+                    nShaders, vs_buf, nShaders, fs_buf, nShaders);
+#else
+            sysLogPrintf(LOG_INFO, "[shader] #%d compiling id %llx/%x (vs %d B, fs %d B)",
+                         nShaders, (unsigned long long)shader_id0, shader_id1, (int)vs_len, (int)fs_len);
+#endif
+        }
+    }
+#if defined(__vita__)
+    uint64_t t0 = sysGetMicroseconds();
+    g_glCompileShader = nShaders;
+    g_glCompileSinceUs = t0;
+#endif
     GLuint vertex_shader = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(vertex_shader, 1, &sources[0], &lengths[0]);
     glCompileShader(vertex_shader);
@@ -598,6 +707,19 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     glAttachShader(shader_program, vertex_shader);
     glAttachShader(shader_program, fragment_shader);
     glLinkProgram(shader_program);
+    glGetProgramiv(shader_program, GL_LINK_STATUS, &success);
+    if (!success) {
+        char link_log[1024] = "";
+        GLint n = 0;
+        glGetProgramInfoLog(shader_program, sizeof(link_log), &n, link_log);
+        sysLogPrintf(LOG_ERROR, "[shader] link failed id %llx/%x: %s\nVS:\n%s\nFS:\n%s",
+                     (unsigned long long)shader_id0, shader_id1, link_log, vs_buf, fs_buf);
+    }
+#if defined(__vita__)
+    g_glCompileShader = 0;
+    sysLogPrintf(LOG_INFO, "[shader] #%d built in %u ms (link %s)", nShaders,
+                 (unsigned)((sysGetMicroseconds() - t0) / 1000), success ? "ok" : "FAILED");
+#endif
 
 #if !defined(__vita__)
     glDetachShader(shader_program, vertex_shader); /* vitaGL has no glDetachShader; harmless to skip */
@@ -674,6 +796,12 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     prg->noise_scale_location = glGetUniformLocation(shader_program, "noise_scale");
     prg->three_point_filter_locations[0] = glGetUniformLocation(shader_program, "three_point_filter0");
     prg->three_point_filter_locations[1] = glGetUniformLocation(shader_program, "three_point_filter1");
+#if defined(__vita__)
+    prg->tex_size_locations[0] = glGetUniformLocation(shader_program, "uTexSize0");
+    prg->tex_size_locations[1] = glGetUniformLocation(shader_program, "uTexSize1");
+#else
+    prg->tex_size_locations[0] = prg->tex_size_locations[1] = -1;
+#endif
 
     gfx_opengl_load_shader(prg);
 
@@ -706,6 +834,9 @@ static GLuint gfx_opengl_new_texture(void) {
 }
 
 static void gfx_opengl_delete_texture(uint32_t texID) {
+#if defined(__vita__)
+    s_texSizes.erase(texID);
+#endif
     glDeleteTextures(1, &texID);
 }
 
@@ -714,9 +845,22 @@ static void gfx_opengl_select_texture(int tile, GLuint texture_id, bool linear_f
     glBindTexture(GL_TEXTURE_2D, texture_id);
 
     current_textures_linear_filter[tile] = linear_filter;
+#if defined(__vita__)
+    if (tile >= 0 && tile < 2) {
+        s_curTile = tile;
+        s_boundTex[tile] = texture_id;
+        auto it = s_texSizes.find(texture_id);
+        if (it != s_texSizes.end()) { s_texW[tile] = it->second.first; s_texH[tile] = it->second.second; }
+    }
+#endif
 }
 
 static void gfx_opengl_upload_texture(const uint8_t* rgba32_buf, uint32_t width, uint32_t height, bool gen_mipmaps) {
+#if defined(__vita__)
+    s_texSizes[s_boundTex[s_curTile]] = std::make_pair(width, height);
+    s_texW[s_curTile] = width;
+    s_texH[s_curTile] = height;
+#endif
 #ifdef PORT
     /* GE_TEXDUMP: PPM-dump every uploaded texture (first N) for B2/D161 triage.
      * D250: this runs on every texture upload -- cache the getenv() like the
@@ -873,6 +1017,9 @@ static void gfx_opengl_set_use_alpha(bool use_alpha, bool modulate) {
 
 static void gfx_opengl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
     // printf("flushing %d tris\n", buf_vbo_num_tris);
+#if defined(__vita__)
+    vitaSetTexSizeUniforms();
+#endif
     glBufferData(GL_ARRAY_BUFFER, sizeof(float) * buf_vbo_len, buf_vbo, GL_STREAM_DRAW);
     glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
 }
@@ -1228,13 +1375,19 @@ static void gfx_opengl_update_framebuffer_parameters(int fb_id, uint32_t width, 
     height = max(height, 1U);
 
     if (gfx_framebuffers_enabled) {
-        glBindFramebuffer(GL_FRAMEBUFFER, fb.fbo);
+        /* fb 0 is the screen: bind GL name 0, never the empty framebuffers[0].fbo
+         * (vitaGL dereferences its missing color texture on the next draw/clear). */
+        glBindFramebuffer(GL_FRAMEBUFFER, fb_id == 0 ? 0 : fb.fbo);
 
         if (fb_id != 0) {
             if (fb.width != width || fb.height != height || fb.msaa_level != msaa_level) {
                 if (msaa_level <= 1) {
                     glBindTexture(GL_TEXTURE_2D, fb.clrbuf);
+#if defined(__vita__)
+                    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+#else
                     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+#endif
                     glBindTexture(GL_TEXTURE_2D, 0);
                     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fb.clrbuf, 0);
                 } else {
@@ -1260,6 +1413,11 @@ static void gfx_opengl_update_framebuffer_parameters(int fb_id, uint32_t width, 
                 glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, fb.rbo);
             } else if (fb.has_depth_buffer && !has_depth_buffer) {
                 glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, 0);
+            }
+            if (fb.width != width || fb.height != height || fb.has_depth_buffer != has_depth_buffer) {
+                sysLogPrintf(LOG_INFO, "[fb] %d -> %ux%u msaa=%u depth=%d status=0x%x",
+                             fb_id, width, height, msaa_level, (int)has_depth_buffer,
+                             (unsigned)glCheckFramebufferStatus(GL_FRAMEBUFFER));
             }
         }
     } else {
@@ -1319,11 +1477,11 @@ void gfx_opengl_resolve_msaa_color_buffer(int fb_id_target, int fb_id_source) {
     Framebuffer& fb_dst = framebuffers[fb_id_target];
     Framebuffer& fb_src = framebuffers[fb_id_source];
     glDisable(GL_SCISSOR_TEST);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fb_dst.fbo);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, fb_src.fbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fb_id_target == 0 ? 0 : fb_dst.fbo);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, fb_id_source == 0 ? 0 : fb_src.fbo);
     glBlitFramebuffer(0, 0, fb_src.width, fb_src.height, 0, 0, fb_dst.width, fb_dst.height, GL_COLOR_BUFFER_BIT,
                       GL_NEAREST);
-    glBindFramebuffer(GL_FRAMEBUFFER, current_framebuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, current_framebuffer == 0 ? 0 : framebuffers[current_framebuffer].fbo);
     glEnable(GL_SCISSOR_TEST);
 }
 
@@ -1337,6 +1495,12 @@ void gfx_opengl_select_texture_fb(int fb_id) {
     glBindTexture(GL_TEXTURE_2D, framebuffers[fb_id].clrbuf);
 
     current_textures_linear_filter[0] = true;
+#if defined(__vita__)
+    s_curTile = 0;
+    s_boundTex[0] = framebuffers[fb_id].clrbuf;
+    s_texW[0] = framebuffers[fb_id].width;
+    s_texH[0] = framebuffers[fb_id].height;
+#endif
 }
 
 void gfx_opengl_copy_framebuffer(int fb_dst, int fb_src, int left, int top, bool flip_y, bool use_back) {
@@ -1370,8 +1534,8 @@ void gfx_opengl_copy_framebuffer(int fb_dst, int fb_src, int left, int top, bool
 
     glDisable(GL_SCISSOR_TEST);
 
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, src.fbo);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, dst.fbo);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, fb_src == 0 ? 0 : src.fbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fb_dst == 0 ? 0 : dst.fbo);
 
     if (flip_y) {
         // flip the dst rect to mirror the image vertically
@@ -1387,7 +1551,7 @@ void gfx_opengl_copy_framebuffer(int fb_dst, int fb_src, int left, int top, bool
 
     glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
-    glBindFramebuffer(GL_FRAMEBUFFER, framebuffers[current_framebuffer].fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, current_framebuffer == 0 ? 0 : framebuffers[current_framebuffer].fbo);
 
     glReadBuffer(GL_BACK);
 

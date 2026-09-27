@@ -697,15 +697,16 @@ static void validateModel(ModelCtx *m, Emit *e, const U32V *placedOff, const U32
         qsort(rs, m->regions.n, sizeof(Reg), cmpRegNew);   /* stable enough: only nw compared */
         int64_t pos = 0;
         for (size_t i = 0; i < m->regions.n; i++) {
-            if (rs[i].nw != pos || rs[i].nw + rs[i].osz > (int64_t)DPC) {
+            int bad = e->is64 ? (rs[i].nw != pos) : (rs[i].nw < pos); /* 32-bit: alignment gaps allowed */
+            if (bad || rs[i].nw + rs[i].osz > (int64_t)DPC) {
                 cvErr(c, nm, "RT tiling gap/overlap", (uint32_t)pos, (uint32_t)rs[i].old);
                 free(rs);
                 return;
             }
-            pos += rs[i].osz;
+            pos = rs[i].nw + rs[i].osz;
         }
         free(rs);
-        if (pos != (int64_t)DPC) {
+        if (e->is64 ? (pos != (int64_t)DPC) : (pos > (int64_t)DPC)) {
             cvErr(c, nm, "RT tiling ends short", (uint32_t)pos, DPC);
             return;
         }
@@ -822,8 +823,18 @@ static void validateModel(ModelCtx *m, Emit *e, const U32V *placedOff, const U32
     (void)D;
 }
 
+/* 1 for PC64 (byte-identical to d43_emit.py); 8 for 32-bit, where ARM
+ * multi-word loads fault on the unaligned offsets tight packing produces. */
+static int64_t g_regionAlign = 1;
+
+static int64_t alignPos(int64_t cur)
+{
+    return (cur + g_regionAlign - 1) & ~(g_regionAlign - 1);
+}
+
 static int64_t addRegion(RegV *rv, int64_t old, int64_t osz, int64_t cur)
 {
+    cur = alignPos(cur);
     regPush(rv, old, osz, cur);
     return cur + osz;
 }
@@ -845,6 +856,7 @@ static int processModel(Ctx *c, const PcConvModel *pm, Sidecar *sc)
     mc.c = c;
     mc.name = pm->name;
     int nerr0 = c->nerr;
+    g_regionAlign = 1; /* switch + texconfig tables stay packed (indexed arrays) */
 
     if ((uint64_t)pm->addr + pm->size > c->romSize || pm->size < 2) {
         cvErr(c, pm->name, "filelist row outside ROM", pm->addr, pm->size);
@@ -895,7 +907,11 @@ static int processModel(Ctx *c, const PcConvModel *pm, Sidecar *sc)
     for (size_t k = 0; k < placedOff.n; k++) {
         uint32_t no = placedOff.p[k], op = placedOp.p[k];
         uint32_t data = sBe32o(&mc.src, no + 4);
+        /* Root node (k == 0) stays packed: the game derives RootNode as
+         * &Textures[numtextures], not through a pointer we rewrite. */
+        g_regionAlign = (is64 || k == 0) ? 1 : 8;
         dstpos = addRegion(regions, no, NODE, dstpos);
+        g_regionAlign = is64 ? 1 : 8;
         mc.nodeNew[no >> 2] = dstpos - NODE;
         uint32_t psz = recSize(is64, op);
         if (op == 17 || psz == 0) {
@@ -906,7 +922,7 @@ static int processModel(Ctx *c, const PcConvModel *pm, Sidecar *sc)
             cvErr(c, pm->name, "record offset unaligned/outside", data, no);
             continue;
         }
-        mc.recNew[data >> 2] = dstpos;
+        mc.recNew[data >> 2] = alignPos(dstpos);
         dstpos = addRegion(regions, data, psz, dstpos);
         if (op == 4) {
             uint32_t nv = sBu16(&mc.src, data + 0x10), vo = sBe32o(&mc.src, data + 0xC);
@@ -943,6 +959,10 @@ static int processModel(Ctx *c, const PcConvModel *pm, Sidecar *sc)
                 dstpos = addRegion(regions, vo, 16 * (int64_t)nv, dstpos);
             }
         }
+    }
+    if (mc.nodeNew[mc.R0 >> 2] != (int64_t)(PW * NS + 12 * NT)) {
+        cvErr(c, pm->name, "root node not at &Textures[numtextures]", (uint32_t)mc.nodeNew[mc.R0 >> 2], PW * NS + 12 * NT);
+        goto done;
     }
     if (mc.src.oob) { cvErr(c, pm->name, "layout: read past end of file", 0, 0); goto done; }
     if (c->nerr > nerr0)
@@ -1026,6 +1046,7 @@ static int processModel(Ctx *c, const PcConvModel *pm, Sidecar *sc)
             if ((end - g) % 8)
                 cvErr(c, pm->name, "GDL end not 8B aligned", g, 0);
             if (g >= D || (g & 3)) { cvErr(c, pm->name, "GDL offset unaligned/outside", g, 0); continue; }
+            dstpos = alignPos(dstpos);
             mc.gdlNew[g >> 2] = dstpos;
             dstpos += 16 * (int64_t)nslots;
             totalSlots += (int)nslots;
@@ -1037,7 +1058,7 @@ static int processModel(Ctx *c, const PcConvModel *pm, Sidecar *sc)
     if (c->nerr > nerr0)
         goto done;
 
-    uint32_t DPC = (uint32_t)dstpos;
+    uint32_t DPC = (uint32_t)alignPos(dstpos);
 
     /* ---- remap machinery ---- */
     qsort(regions->p, regions->n, sizeof(Reg), cmpRegOld);

@@ -18,6 +18,10 @@
 #include "objecthandler.h"
 #include "quaternion.h"
 #include "random.h"
+#if defined(__vita__)
+#include "system.h"
+#include "initanitable.h"
+#endif
 
 
 typedef struct ModelGroupMtxBuildArg {
@@ -951,6 +955,17 @@ f32 getinstsize(Model *arg0)
     }
     #endif
 
+#if defined(__vita__)
+    if (arg0 == NULL || arg0->obj == NULL)
+    {
+        /* A model with no header here means its slot was freed or double-assigned: log the caller, don't fault. */
+        static int nBad = 0;
+        if (nBad++ < 32)
+            sysLogPrintf(LOG_ERROR, "[model] getinstsize on model=%p obj=NULL caller=%p",
+                         (void *)arg0, __builtin_return_address(0));
+        return 0.0f;
+    }
+#endif
     return arg0->obj->BoundingVolumeRadius * arg0->scale;
 }
 
@@ -1237,6 +1252,27 @@ void sub_GAME_7F06D490(Model *model, ModelNode *modelNode)
     rw->Header.pos.x = sp2c.x;
     rw->Header.pos.y = ((f32) sp2c.y) + rw->Header.ground;
     rw->Header.pos.z = sp2c.z;
+#if defined(__vita__)
+    {
+        /* Guards render sunk: root y (anim) vs ground vs final, per chr model, a few samples each. */
+        static Model *seen[8];
+        static int count[8];
+        static int tick;
+        int k;
+        if (model->unka0 && (++tick % 120) == 0) {
+            for (k = 0; k < 8 && seen[k] && seen[k] != model; k++) {}
+            if (k < 8 && count[k] < 4) {
+                ChrRecord *c = model->chr;
+                seen[k] = model;
+                count[k]++;
+                sysLogPrintf(LOG_INFO, "[chrpos] model=%p anim=%p rooty=%.2f (anim y %.2f) scale=%.4f*%.4f ground=%.2f posy=%.2f manground=%.2f chrheight=%.2f propy=%.2f",
+                             (void *)model, (void *)model->anim, sp2c.y, sp38.y, model->scale, model->anim_translation_scale,
+                             rw->Header.ground, rw->Header.pos.y, c ? c->manground : 0.0f, c ? c->chrheight : 0.0f,
+                             (c && c->prop) ? c->prop->pos.y : 0.0f);
+            }
+        }
+    }
+#endif
 
     rw->Header.unk34.x += sp38.x;
     rw->Header.unk34.z += sp38.z;
@@ -2854,7 +2890,26 @@ void modelSetAnimationWithMerge(Model *model, ModelAnimation *modelAnimation, s3
 }
 
 
+#if defined(__vita__)
+u32 g_vitaAnimTableSize;
+#endif
+
 void modelSetAnimation(Model *model, ModelAnimation *modelAnimation, s32 flip, f32 startframe, f32 speed, f32 merge) {
+#if defined(__vita__)
+    {
+        /* An anim outside the animation table is a bad table entry: log the caller and skip. */
+        static int nBad = 0;
+        uintptr_t base = (uintptr_t)ptr_animation_table;
+        uintptr_t a = (uintptr_t)modelAnimation;
+        if (a < base || a + sizeof(ModelAnimation) > base + g_vitaAnimTableSize) {
+            if (nBad++ < 32)
+                sysLogPrintf(LOG_ERROR, "[anim] bad anim %p (table %p+0x%x) model=%p caller=%p",
+                             (void *)modelAnimation, (void *)base, g_vitaAnimTableSize,
+                             (void *)model, __builtin_return_address(0));
+            return;
+        }
+    }
+#endif
 #ifdef PORT
     /* D173 M-175: identify the actual caller that sets the intro puppet's
      * first animation (M-174's firing_animation_groups probe got zero hits,

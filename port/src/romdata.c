@@ -455,6 +455,22 @@ const u8 *romdataGetRom(void)
 }
 u32       romdataGetRomSize(void) { return romSize; }
 
+/* CPU pointer to a cart address (romassets symbol); the ROM isn't at 0x10000000 on Vita. */
+const void *romdataCartPtr(const void *cartAddr)
+{
+    return (const void *)CART_TO_HOST(cartAddr);
+}
+
+/* Inverse: cart-space address (what DMA/hw_address expect) of a host pointer into the image. */
+u32 romdataHostToCart(uintptr_t host)
+{
+#if defined(__vita__)
+    return (u32)(host - g_vitaCartBase + CART_BASE);
+#else
+    return (u32)host;
+#endif
+}
+
 /*
  * Is this cart address inside the mapped ROM? Used by the PI shims to bounds-
  * check DMA before touching host memory.

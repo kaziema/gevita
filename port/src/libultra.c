@@ -152,7 +152,12 @@ u32 osGetCount(void)
 
 #define PORT_MAX_THREADS 16
 #define PORT_MAX_QUEUES  64
+#if defined(__vita__)
+/* Stacks come from RAM vitaGL leaves free; 1 MB matches the boot thread. */
+#define PORT_THREAD_STACK (1u * 1024u * 1024u)
+#else
 #define PORT_THREAD_STACK (8u * 1024u * 1024u)
+#endif
 
 typedef struct PortThread {
     OSThread *os;       /* game-visible thread object */
@@ -163,9 +168,21 @@ typedef struct PortThread {
     unsigned long tid;  /* OS thread id (thread dumps) */
     int started;        /* osStartThread called */
     int exited;         /* entry returned / stopped / parked (idle) */
+    OSMesgQueue *waitMq;    /* queue this thread is blocked on (heartbeat) */
+    void *waitFrom;         /* caller of the blocking osRecvMesg/osSendMesg */
+    uint64_t waitSinceUs;
 } PortThread;
 
 static PortThread g_pt[PORT_MAX_THREADS];
+
+static PortThread *portSelfThread(void)
+{
+    pthread_t me = pthread_self();
+    for (int i = 0; i < PORT_MAX_THREADS; ++i)
+        if (g_pt[i].started && pthread_equal(g_pt[i].th, me))
+            return &g_pt[i];
+    return NULL;
+}
 
 /* Side table: OSMesgQueue* -> lock/cond. The game's OSMesgQueue struct has a
  * fixed N64 layout, so the synchronization state lives here instead. */
@@ -217,20 +234,55 @@ static void portHeartbeatCheck(void)
      * dumps. Use a longer window and stop after a few reports. */
     static int fired = 0;
     uint64_t now = sysGetMicroseconds();
-    if (fired < 3 && now - g_lastFrameUs > 8000000 && now - g_lastHeartbeatUs > 5000000) {
+#if defined(__vita__)
+    /* Stall = time since the frame counter last moved, on this thread's own clock.
+     * Reading g_lastFrameUs cross-thread raced (and tears on 32-bit): now < last
+     * wrapped to a huge "stall" and forced a dump mid-game. */
+    static int seenFrames = -1;
+    static uint64_t progressUs;
+    int frames = *(volatile int *)&g_framesRendered;
+    if (frames != seenFrames) {
+        seenFrames = frames;
+        progressUs = now;
+        fired = 0;
+        return;
+    }
+    uint64_t stalled = now - progressUs;
+#else
+    uint64_t stalled = now - g_lastFrameUs;
+#endif
+    if (fired < 3 && stalled > 8000000 && now - g_lastHeartbeatUs > 5000000) {
+#if defined(__vita__)
+        {
+            /* A slow SceShaccCg compile is not a hang: report it, give it 60 s before dumping. */
+            extern volatile int g_glCompileShader;
+            extern volatile uint64_t g_glCompileSinceUs;
+            int sh = g_glCompileShader;
+            uint64_t since = g_glCompileSinceUs;
+            if (sh && now > since) {
+                sysLogPrintf(LOG_ERROR, "kernel heartbeat: render thread compiling shader #%d for %llu ms",
+                             sh, (unsigned long long)(now - since) / 1000);
+                if (now - since < 60000000) {
+                    g_lastHeartbeatUs = now;
+                    return;
+                }
+            }
+        }
+#endif
         fired++;
         g_lastHeartbeatUs = now;
         sysLogPrintf(LOG_ERROR,
             "kernel heartbeat: no frame rendered for %llu ms (frames=%d); state:",
-            (unsigned long long)(now - g_lastFrameUs) / 1000, g_framesRendered);
+            (unsigned long long)stalled / 1000, g_framesRendered);
         for (int i = 0; i < PORT_MAX_THREADS; ++i) {
             PortThread *t = &g_pt[i];
             if (!t->os) continue;
             sysLogPrintf(LOG_ERROR,
-                "  T%d(id=%d) os=%p entry_rel=%p started=%d exited=%d",
+                "  T%d(id=%d) os=%p entry_rel=%p started=%d exited=%d waitMq=%p from=%p for=%llums",
                 i, (int)t->id, (void *)t->os,
                 (void *)((uintptr_t)t->entry - sysImageBase()),
-                t->started, t->exited);
+                t->started, t->exited, (void *)t->waitMq, t->waitFrom,
+                (t->waitMq && now > t->waitSinceUs) ? (unsigned long long)(now - t->waitSinceUs) / 1000 : 0ULL);
         }
         for (int i = 0; i < g_pqCount; ++i) {
             OSMesgQueue *mq = g_pq[i].os;
@@ -262,6 +314,14 @@ static void portHeartbeatCheck(void)
             }
         }
         crashDumpThreads(tids, names, n);
+#if defined(__vita__)
+        /* No cross-thread unwinder here: fault on purpose so the OS writes a
+         * .psp2dmp with every thread's PC and stack (vita-parse-core reads it). */
+        if (fired >= 2) {
+            sysLogPrintf(LOG_ERROR, "kernel heartbeat: forcing a crash dump to capture the hang");
+            *(volatile int *)0 = 0;
+        }
+#endif
     }
 }
 
@@ -619,7 +679,10 @@ s32 osSendMesg(OSMesgQueue *mq, OSMesg msg, s32 flag)
             pthread_mutex_unlock(&pq->lock);
             return -1;
         }
+        PortThread *self = portSelfThread();
+        if (self) { self->waitMq = mq; self->waitFrom = __builtin_return_address(0); self->waitSinceUs = sysGetMicroseconds(); }
         pthread_cond_wait(&pq->cond, &pq->lock);
+        if (self) self->waitMq = NULL;
     }
     mq->msg[(mq->first + mq->validCount) % mq->msgCount] = msg;
     ++mq->validCount;
@@ -698,7 +761,10 @@ s32 osRecvMesg(OSMesgQueue *mq, OSMesg *msg, s32 flag)
                          (void *)mq, ra,
                          (void *)((uintptr_t)ra - sysImageBase()));
         }
+        PortThread *self = portSelfThread();
+        if (self) { self->waitMq = mq; self->waitFrom = __builtin_return_address(0); self->waitSinceUs = sysGetMicroseconds(); }
         pthread_cond_wait(&pq->cond, &pq->lock);
+        if (self) self->waitMq = NULL;
     }
     OSMesg m = mq->msg[mq->first];
     mq->first = (mq->first + 1) % mq->msgCount;
@@ -1440,6 +1506,20 @@ void osSpTaskStartGo(OSTask *t)
             sysLogPrintf(LOG_NOTE, "frame %d rendered in %llu us",
                          g_framesRendered,
                          (unsigned long long)(sysGetMicroseconds() - t0));
+        {
+            /* One line per menu change / player creation, so a log shows how far boot got. */
+            extern int get_currentmenu(void); /* front.c; MENU is int-sized */
+            extern void *g_CurrentPlayer;
+            int current_menu = get_currentmenu();
+            static int lastMenu = -12345;
+            static void *lastPlayer = (void *)1;
+            if (current_menu != lastMenu || (g_CurrentPlayer != NULL) != (lastPlayer != NULL)) {
+                sysLogPrintf(LOG_INFO, "[state] frame=%d menu %d -> %d player=%p",
+                             g_framesRendered, lastMenu, current_menu, g_CurrentPlayer);
+                lastMenu = current_menu;
+                lastPlayer = g_CurrentPlayer;
+            }
+        }
     }
 
     portPostEventForce(OS_EVENT_SP);   /* D134: must not be dropped */

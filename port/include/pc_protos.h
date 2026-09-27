@@ -489,5 +489,16 @@ void zbufSetBuffer();
 #include "bondconstants.h" /* AMMOTYPE */
 s32 check_cur_player_ammo_amount_in_inventory(AMMOTYPE);
 s32 get_ammo_type_for_weapon(ITEM_IDS);
+/* ARM hard-float: an implicit int f() reads r0 while f32 comes back in s0 (and float args go
+ * in d regs as doubles). These are the only float-signature functions called undeclared. */
+float floorf(float);
+f32 get_horizontal_offset_on_solo_watch_menu_for_item(ITEM_IDS);
+f32 get_vertical_offset_on_solo_watch_menu_for_item(ITEM_IDS);
+f32 get_depth_offset_solo_watch_menu_inventory_page_for_item(ITEM_IDS);
+f32 get_vertical_position_solo_watch_menu_main_page_for_item(ITEM_IDS);
+f32 get_lateral_position_solo_watch_menu_main_page_for_item(ITEM_IDS);
+f32 get_depth_on_solo_watch_menu_page_for_item(ITEM_IDS);
+f32 get_xrotation_solo_watch_menu_for_item(ITEM_IDS);
+f32 get_yrotation_solo_watch_menu_for_item(ITEM_IDS);
 #endif /* PORT && __x86_64__ && !__cplusplus */
 #endif /* _PC_PROTOS_H_ */

@@ -12,6 +12,7 @@
  */
 
 #include <PR/ultratypes.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -35,6 +36,12 @@ u32       romdataGetRomSize(void);
  * mapped image. The PI shims call this before servicing DMA.
  */
 int romdataCartAddrValid(u32 addr, u32 size);
+
+/* CPU pointer to a cart address (romassets symbol). */
+const void *romdataCartPtr(const void *cartAddr);
+
+/* Cart-space address of a host pointer into the mapped image. */
+u32 romdataHostToCart(uintptr_t host);
 
 /*
  * D33 (docs/internals.md): the .z64 file stores structured multi-byte

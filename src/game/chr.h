@@ -181,7 +181,11 @@ extern struct weapon_firing_animation_table doubles_firing_animation_group1[];
 extern struct weapon_firing_animation_table doubles_firing_animation_group2[];
 extern struct weapon_firing_animation_table doubles_firing_animation_group3[];
 extern struct weapon_firing_animation_table crouched_rifle_firing_animation_group1[];
+#ifdef PORT
+#define crouched_rifle_firing_animation_groupA (&crouched_rifle_firing_animation_group1[1])
+#else
 extern struct weapon_firing_animation_table crouched_rifle_firing_animation_groupA[];
+#endif
 extern struct weapon_firing_animation_table crouched_rifle_firing_animation_group2[];
 extern struct weapon_firing_animation_table crouched_rifle_firing_animation_group3[];
 extern struct weapon_firing_animation_table crouched_pistol_firing_animation_group1[];

@@ -704,6 +704,19 @@ void musicSeqPlayerInit(void)
 #endif
 #endif
         alBnkfNew(sfxBank, (u8 *)&_sfxtblSegmentRomStart);
+#if defined(__vita__)
+        {
+            ALBank *b0 = sfxBank->bankCount > 0 ? sfxBank->bankArray[0] : NULL;
+            ALInstrument *i0 = (b0 && b0->instCount > 0) ? b0->instArray[0] : NULL;
+            ALSound *s0 = (i0 && i0->soundCount > 0) ? i0->soundArray[0] : NULL;
+            osSyncPrintf("[audio] sfxBank: rev=0x%04x banks=%d insts=%d sounds=%d s0=%p wt=%p base=%p len=%d\n",
+                         (int)sfxBank->revision, (int)sfxBank->bankCount,
+                         b0 ? (int)b0->instCount : -1, i0 ? (int)i0->soundCount : -1,
+                         (void *)s0, s0 ? (void *)s0->wavetable : NULL,
+                         (s0 && s0->wavetable) ? (void *)s0->wavetable->base : NULL,
+                         (s0 && s0->wavetable) ? (int)s0->wavetable->len : -1);
+        }
+#endif
         g_musicSfxBufferPtr = sfxBank->bankArray[0];
     }
 
@@ -728,6 +741,19 @@ void musicSeqPlayerInit(void)
 #endif
 #endif
         alBnkfNew(instrumentBank, (u8 *)&_instrumentstblSegmentRomStart);
+#if defined(__vita__)
+        {
+            ALBank *b0 = instrumentBank->bankCount > 0 ? instrumentBank->bankArray[0] : NULL;
+            ALInstrument *i0 = (b0 && b0->instCount > 0) ? b0->instArray[0] : NULL;
+            ALSound *s0 = (i0 && i0->soundCount > 0) ? i0->soundArray[0] : NULL;
+            osSyncPrintf("[audio] instrumentBank: rev=0x%04x banks=%d insts=%d sounds=%d s0=%p wt=%p base=%p len=%d\n",
+                         (int)instrumentBank->revision, (int)instrumentBank->bankCount,
+                         b0 ? (int)b0->instCount : -1, i0 ? (int)i0->soundCount : -1,
+                         (void *)s0, s0 ? (void *)s0->wavetable : NULL,
+                         (s0 && s0->wavetable) ? (void *)s0->wavetable->base : NULL,
+                         (s0 && s0->wavetable) ? (int)s0->wavetable->len : -1);
+        }
+#endif
         g_musicInstrumentBufferPtr = instrumentBank->bankArray[0];
     }
 

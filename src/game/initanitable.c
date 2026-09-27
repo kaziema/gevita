@@ -293,6 +293,12 @@ void alloc_load_expand_ani_table(void)
     animsDataSegmentSize = (s32)&_animation_dataSegmentEnd - (s32)&_animation_dataSegmentStart;
     
     ptr_animation_table = mempAllocBytesInBank(animsDataSegmentSize, MEMPOOL_PERMANENT);
+#if defined(__vita__)
+    {
+        extern u32 g_vitaAnimTableSize;
+        g_vitaAnimTableSize = (u32)animsDataSegmentSize;
+    }
+#endif
 
     romCopy(ptr_animation_table, &_animation_dataSegmentRomStart, animsDataSegmentSize);
     /* D33: the ROM file stores the record headers and descriptor arrays
