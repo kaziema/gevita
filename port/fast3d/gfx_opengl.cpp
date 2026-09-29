@@ -1460,6 +1460,22 @@ static void gfx_opengl_update_framebuffer_parameters(int fb_id, uint32_t width, 
     width = max(width, 1U);
     height = max(height, 1U);
 
+    /* macOS GL 4.1 core: asking for more samples than GL_MAX_SAMPLES (e.g. 8x)
+     * makes the multisample renderbuffers incomplete and the screen goes dark
+     * (glReadPixels 0x506). Clamp to what the driver reports. */
+#if !defined(__vita__) /* no GL_MAX_SAMPLES in vitaGL; FB MSAA is 1 on Vita */
+    if (msaa_level > 1) {
+        static GLint maxSamples = -1;
+        if (maxSamples < 0) {
+            glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
+            if (maxSamples < 1) maxSamples = 1;
+        }
+        if ((GLint)msaa_level > maxSamples) {
+            msaa_level = (uint32_t)maxSamples;
+        }
+    }
+#endif
+
     if (gfx_framebuffers_enabled) {
         /* fb 0 is the screen: bind GL name 0, never the empty framebuffers[0].fbo
          * (vitaGL dereferences its missing color texture on the next draw/clear). */
@@ -1567,6 +1583,7 @@ void gfx_opengl_resolve_msaa_color_buffer(int fb_id_target, int fb_id_source) {
     glBindFramebuffer(GL_READ_FRAMEBUFFER, fb_id_source == 0 ? 0 : fb_src.fbo);
     glBlitFramebuffer(0, 0, fb_src.width, fb_src.height, 0, 0, fb_dst.width, fb_dst.height, GL_COLOR_BUFFER_BIT,
                       GL_NEAREST);
+    /* current_framebuffer is an INDEX into framebuffers[], not a GL name; fb 0 is the window's default framebuffer (name 0). */
     glBindFramebuffer(GL_FRAMEBUFFER, current_framebuffer == 0 ? 0 : framebuffers[current_framebuffer].fbo);
     glEnable(GL_SCISSOR_TEST);
 }

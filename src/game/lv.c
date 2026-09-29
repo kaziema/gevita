@@ -1089,8 +1089,10 @@ void lvlManageMpGame(void)
     {
         extern void d318WatchdogTick(void);
         extern void d318TimelineTick(void);
+        extern void d318bProbeTick(void);
         d318WatchdogTick(); /* D318 permanent port-side deadlock recovery (findings D318) */
         d318TimelineTick(); /* D318T env-gated diagnostic timeline (GE_D318T=1) */
+        d318bProbeTick();   /* D318B env-gated attack-state boundary probe (GE_D318B, TEMP) */
     }
 #endif
     if ((g_CurrentStageToLoad != LEVELID_TITLE) && (D_80048394 == 0) && (g_ClockTimer > 0))

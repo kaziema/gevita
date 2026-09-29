@@ -12,6 +12,7 @@
  */
 
 #include <PR/ultratypes.h>
+#include <SDL.h>   /* API types (SDL_GameControllerButton/Axis); cf. video.h */
 
 #ifdef __cplusplus
 extern "C" {
@@ -64,6 +65,23 @@ short inputPadAxis(int idx, SDL_GameControllerAxis a);
 /* Queue a mouse-wheel weapon-cycle input (one short A-button press). Sign is
  * ignored -- GE only cycles forward on a bare A edge. */
 void inputPostWheel(int notches);
+
+/* v0.4.0 M3: re-derive the keyboard binds after an F10 change to
+ * Input.CrouchMode or a future binding capture (optionsoverlay hook).
+ * Also drops the latched-crouch state. Scheduler thread only. */
+void inputBindingsApply(void);
+/* D384/D385: Primary/Secondary each accept a key or Mouse 1..5.
+ * Legacy extra ini tokens remain on disk but are ignored until action edit. */
+#define INPUT_BIND_SLOTS 2
+#define INPUT_BIND_MOUSE(button) (SDL_NUM_SCANCODES + (button))
+const char *inputBindingSlot(const char *key, int slot);
+int inputBindingSetSlot(const char *key, int slot, int code);
+int inputBindingResetKey(const char *key);
+
+/* D345(b): 1 while the 1:1 menu pointer owns cursor_h/v_pos (in a menu,
+ * abs pointer available, mouse used within the re-assert window). Port
+ * screens that teleport the crosshair should skip their snap when set. */
+int  inputMenuPointerLive(void);
 
 /* Re-enumerate gamepads after a hotplug (SDL_CONTROLLERDEVICEADDED/REMOVED). */
 void inputRescanPads(void);

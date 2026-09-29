@@ -1,5 +1,6 @@
 #define NOMINMAX
 
+#include "floatvtx.h" /* D245 */
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -138,12 +139,6 @@ static struct RSP {
 
     const struct NormalColor *vertex_colors; //[MAX_VERTEX_COLORS];
 } rsp;
-
-/* D236 pass 16 (TEMP): segment byte (top byte of the raw segmented address)
- * of the most recent G_VTX load, so a later triangle-time probe can report
- * which segment the tree class's vertices actually came from. See the
- * G_VTX case comment below for why. Remove once D236 pass 16 concludes. */
-static uint8_t g_d236_last_vtx_seg = 0xFF;
 
 struct RawTexMetadata {
     uint16_t width, height;
@@ -562,6 +557,13 @@ void gfx_texture_cache_clear() {
     rdp.textures_changed[0] = rdp.textures_changed[1] = true;
     memset(rendering_state.textures, 0, sizeof(rendering_state.textures));
 }
+
+/* D235: entry count for the stage-transition probe (boss.c). */
+extern "C" int gfx_texture_cache_count(void) {
+    return (int)gfx_texture_cache.map.size();
+}
+
+extern "C" u8 *g_VtxBuffers[3]; /* dyn.c per-frame pool (dynamic-texture cache key) */
 
 static bool gfx_texture_cache_lookup(int i, const TextureCacheKey& key) {
     TextureCacheMap::iterator it = gfx_texture_cache.map.find(key);
@@ -1008,6 +1010,11 @@ bool g_fix_mip_textures = true;
  * off. Video.WrapFix = 1. */
 bool g_wrap_fix = false;
 
+/* D236 pass 26: for a GE TEXTURETYPE_DETAIL binding, sample the BASE image
+ * (tile 1) rather than the detail texture sitting at TMEM 0. See
+ * gfx_lod_tile_offset. Video.DetailBaseTile. */
+bool g_detail_base_tile = false;
+
 /* D183 source-pitch de-stride (see import_texture). Default on;
  * GE_TEXPITCH=0 restores the old flat read for A/B. */
 static bool gfx_tex_pitch_fix(void) {
@@ -1083,6 +1090,34 @@ static void import_texture(int i, int tile, bool importReplacement) {
                 loaded_texture.size_bytes, rdp.palette_hash }; // D217: key on palette content
     } else {
         key = { orig_addr, {}, fmt, siz, palette_index, loaded_texture.size_bytes, 0u };
+    }
+
+    /* Intro blood (M-201): textures the game regenerates IN PLACE in the
+     * per-frame dynamic pool (dynAllocate, [g_VtxBuffers[0], g_VtxBuffers[2]))
+     * -- e.g. the gun-barrel / death blood-drip image rebuilt by
+     * die_blood_image_routine -- reuse the same addresses frame after frame,
+     * so an address-only key returns a stale GL texture from an earlier frame.
+     * Key those on a content hash (FNV-1a) instead; static textures keep the
+     * free address key. GE_DYNTEXHASH_OFF=1 disables for A/B. */
+    {
+        static int dynhash_off = -1;
+        if (dynhash_off < 0) dynhash_off = getenv("GE_DYNTEXHASH_OFF") != NULL;
+        /* Game code often reaches this memory through OS_K0_TO_PHYSICAL,
+         * which fast3d resolves into the byte-identical KSEG0 mirror at
+         * 0x80000000 (port/src/dram.c V2) -- normalise to the V1 view the
+         * dyn pool pointers use before the range test. */
+        const uint8_t* v1addr = orig_addr;
+        if ((uintptr_t)v1addr >= 0x80000000UL && (uintptr_t)v1addr < 0x80800000UL) {
+            v1addr -= 0x10000000UL;
+        }
+        if (!dynhash_off && g_VtxBuffers[0] && v1addr >= g_VtxBuffers[0] && v1addr < g_VtxBuffers[2]) {
+            uint32_t h = 2166136261u;
+            const uint32_t n = loaded_texture.size_bytes;
+            for (uint32_t b = 0; b < n; b++) {
+                h = (h ^ orig_addr[b]) * 16777619u;
+            }
+            key.palette_hash = h ? h : 1u;
+        }
     }
 
     if (gfx_texture_cache_lookup(i, key)) {
@@ -1229,6 +1264,33 @@ static void import_texture(int i, int tile, bool importReplacement) {
             FILE* bf = fopen(nm, "wb");
             if (bf) { fwrite(loaded_texture.addr, 1, loaded_texture.size_bytes, bf); fclose(bf); }
         }
+        /* D75 round 3: GE_TEXDUMP_ADDR=<hex> -- dump the raw source bytes of
+         * EVERY import from that address (bypassing the 400-cap) with byte
+         * stats, so a late re-import into a scratch-arena alias can be told
+         * apart from a never-loaded buffer. */
+        static uint64_t ge_texdump_addr = 0;
+        static int ge_texdump_addr_init = 0;
+        if (!ge_texdump_addr_init) {
+            ge_texdump_addr_init = 1;
+            const char* ea = getenv("GE_TEXDUMP_ADDR");
+            if (ea && *ea) ge_texdump_addr = strtoull(ea, NULL, 16);
+        }
+        if (ge_texdump_addr && (uint64_t)(uintptr_t)orig_addr == ge_texdump_addr) {
+            unsigned mn = 255, mx = 0, nz = 0;
+            for (uint32_t i = 0; i < loaded_texture.size_bytes; i++) {
+                uint8_t b = loaded_texture.addr[i];
+                if (b < mn) mn = b; if (b > mx) mx = b; if (b) nz++;
+            }
+            char nm2[160];
+            snprintf(nm2, sizeof nm2, "texdump/a%05d_%ux%u.bin", tdc - 1, tw, th);
+            FILE* bf2 = fopen(nm2, "wb");
+            if (bf2) { fwrite(loaded_texture.addr, 1, loaded_texture.size_bytes, bf2); fclose(bf2); }
+            extern uint32_t num_dls; // same counter the D157I probe uses
+            sysLogPrintf(LOG_NOTE,
+                "GE_TEXA[%d] dls=%u addr=%p fmt=%u siz=%u size=%u min=%u max=%u nonzero=%u/%u file=%s",
+                tdc - 1, num_dls, (void*)orig_addr, fmt, siz,
+                loaded_texture.size_bytes, mn, mx, nz, loaded_texture.size_bytes, nm2);
+        }
     }
 
     /* D161: a CI-format tile drawn with the TLUT disabled (G_TT_NONE) must NOT
@@ -1292,7 +1354,27 @@ static void import_texture(int i, int tile, bool importReplacement) {
         if (siz_eff == G_IM_SIZ_4b) {
             import_texture_ci4(tile, loaded_texture, rdp.tex_lod);
         } else if (siz_eff == G_IM_SIZ_8b) {
-            import_texture_ci8(tile, loaded_texture, rdp.tex_lod);
+            /* D245 (M-201): for the D229 case (RGBA16 tile over a CI8 load --
+             * the IsWater sky water), upload only the base level: the load
+             * carries the whole mip chain (32x32 base + mips = 1400 B), which
+             * made a 32x43 image whose GL REPEAT period (43 rows) differs from
+             * the N64's mask period (32). See the tri-path counterpart. */
+            static int d245_oldtex = -1;
+            if (d245_oldtex < 0) d245_oldtex = getenv("GE_D245_OLDTEX") != NULL;
+            const uint8_t maskt = rdp.texture_tile[tile].maskt;
+            /* Crop by the TILE line size (the importer's row width): for a
+             * LoadBlock, loaded_texture.line_size_bytes is the whole block, so
+             * testing against it never cropped (M-201 follow-up: the mip rows
+             * then showed as coloured dashes on Frigate's water). */
+            const uint32_t d245_row = rdp.texture_tile[tile].line_size_bytes;
+            if (!d245_oldtex && fmt == G_IM_FMT_RGBA && siz == G_IM_SIZ_16b && maskt > 0 && maskt < 12 &&
+                d245_row > 0 && loaded_texture.size_bytes > d245_row * (1u << maskt)) {
+                LoadedTexture lt = loaded_texture;
+                lt.size_bytes = d245_row * (1u << maskt);
+                import_texture_ci8(tile, lt, rdp.tex_lod);
+            } else {
+                import_texture_ci8(tile, loaded_texture, rdp.tex_lod);
+            }
         } else {
             sysFatalError("Bad size for CI texture in tile %d: %02x", tile, siz);
         }
@@ -1461,6 +1543,12 @@ static inline bool fast3d_ptr_ok(const void *p) {
 #endif
 }
 
+/* D252 TEMP (2026-09-26): F12 with GE_D157 set opens a full-detail D157T
+ * burst (every small-texture vertex, no sampling) for ~90 frames, so a live
+ * sighting is captured even after the continuous cap has dropped to 1-in-50.
+ * Armed from videoEndFrame's screenshot path via gfxD157Burst(). */
+static volatile uint32_t s_d157BurstUntil = 0;
+
 static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx* vertices) {
     SUPPORT_CHECK(n_vertices <= MAX_VERTICES);
 
@@ -1606,8 +1694,15 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx* verti
             static const uint8_t known[][4] = {
                 {0xFF,0xFF,0xFF,0xFF}, {0xFF,0xFF,0xC8,0xFF}, {0xFF,0x00,0x00,0xFF},
             };
-            for (const auto& k : known) {
+            /* 2026-09-26: this match was uncapped and white (255,255,255,255)
+             * hits every HUD/text/effect vertex -> ~200k lines in 18 s, 4-6 fps
+             * in live play. Now: first 500 hits, then only inside an F12 burst. */
+            extern uint32_t num_dls;
+            static int d157m_n = 0;
+            const bool d157m_on = d157m_n < 500 || num_dls <= s_d157BurstUntil;
+            if (d157m_on) for (const auto& k : known) {
                 if (v->v.cn[0] == k[0] && v->v.cn[1] == k[1] && v->v.cn[2] == k[2] && v->v.cn[3] == k[3]) {
+                    d157m_n++;
                     sysLogPrintf(LOG_NOTE,
                         "D157: bulletspark-color-match cn=(%d,%d,%d,%d) geometry_mode=%08x LIGHTING=%s -> shaded=(%d,%d,%d)",
                         v->v.cn[0], v->v.cn[1], v->v.cn[2], v->v.cn[3], rsp.geometry_mode,
@@ -1652,11 +1747,17 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx* verti
                          * so a real, minutes-long play session doesn't drop
                          * to sparse 1-in-200 sampling before the player
                          * actually triggers the bug. */
-                        if (d157b_n <= 20000 || (d157b_n % 50) == 0) {
+                        static int d157burst_n = 0;
+                        const bool burst = num_dls <= s_d157BurstUntil && d157burst_n < 60000;
+                        if (burst) d157burst_n++;
+                        /* 2026-09-26: continuous logging cut to a 2000-line baseline;
+                         * the 20000 + 1-in-50 tail was a big share of the
+                         * live-play slowdown. Full detail now comes from F12. */
+                        if (burst || d157b_n <= 2000) {
                             sysLogPrintf(LOG_NOTE,
-                                "D157T: frame=%u cn=(%d,%d,%d,%d) shaded=(%d,%d,%d) LIGHTING=%s geom=%08x combine=%llx | "
+                                "D157T%s: frame=%u cn=(%d,%d,%d,%d) shaded=(%d,%d,%d) LIGHTING=%s geom=%08x combine=%llx | "
                                 "tile0=%u tmem=%u fmt=%u siz=%u addr=%p size=%u line=%u | uv=(%d,%d)",
-                                num_dls,
+                                burst ? "B" : "", num_dls,
                                 v->v.cn[0], v->v.cn[1], v->v.cn[2], v->v.cn[3],
                                 (int)d->color.r, (int)d->color.g, (int)d->color.b,
                                 (rsp.geometry_mode & G_LIGHTING) ? "ON" : "off", rsp.geometry_mode,
@@ -1731,7 +1832,18 @@ static void gfx_sp_modify_vertex(uint16_t vtx_idx, uint8_t where, uint32_t val) 
     v->v = t;
 }
 
+/* Intro blood (M-201): set while a texture rectangle is being drawn. */
+static bool s_in_texrect = false;
+
 static inline int gfx_lod_tile_offset(const int i) {
+    /* Intro blood (M-201): a texture rectangle outside 2-cycle mode samples
+     * exactly the tile its command names -- the RDP only selects LOD tiles in
+     * 2-cycle mode. The title leaves G_TL_LOD set from earlier draws, and the
+     * D236 detail-base rule below then sent the 1-cycle gun-barrel blood
+     * rectangle to a stale tile-1 CI8 declaration (static garbage instead of
+     * the drip). Scoped to texrects so 3D LOD/detail paths are untouched. */
+    if (s_in_texrect && (rdp.other_mode_h & (3U << G_MDSFT_CYCLETYPE)) != G_CYC_2CYCLE)
+        return i;
     if (gfx_detail_textures_enabled)
         return ((rdp.tex_lod && !rdp.tex_detail) ? 0 : i);
     // D107: GE has no true detail textures (gfx_detail_textures_enabled is
@@ -1751,7 +1863,38 @@ static inline int gfx_lod_tile_offset(const int i) {
     // fire @ TMEM 0x188. Returning 0 here fed TEXEL1 the smoke texture too
     // (smoke * smoke) -> the magenta/cyan particle colour. Only fold to the
     // base tile when LOD is actually active.
-    return rdp.tex_lod ? 0 : i;
+    //
+    // D236 pass 26: "GE loads the whole mip chain at TMEM 0" holds for the
+    // TEXTURETYPE_LOD / TEXTURETYPE_MIPMAP bindings (texHandleType0 /
+    // texHandleType2 both do texWriteLoadToTmemAddr(tex, 0)), but NOT for
+    // TEXTURETYPE_DETAIL. texHandleType1 (tex.c) loads the DETAIL texture at
+    // TMEM 0 and the real base image at TMEM offset texGetSizeInBytes(tex2,0)
+    // on tiles 1+. Folding to tile 0 there samples the detail texture instead
+    // of the base image. On Surface 1 that is literally the D236 bug: all four
+    // treeline cards (tex1198-1201, RGBA5551 64x17 cut-outs) are type-1
+    // bindings whose detail texture is tex2465, an opaque 32x32 IA8 noise
+    // tile -- so the treeline draws as an opaque tiled noise wall and the
+    // cards themselves are never even imported (pass 25's "zero fmt=0 siz=2
+    // imports in 4800 frames").
+    //
+    // Discriminator: tile fi+1's declared FORMAT. Tiles 1.. of a type-0/type-2
+    // binding are LOD levels of tile 0's image, so they necessarily carry the
+    // same fmt/siz; a type-1 pair is two unrelated textures and generally does
+    // not (Surface 1's cards: tile 0 = tex2465 IA8, tile 1 = tex1198 RGBA16).
+    // Deliberately asymmetric -- a mip chain can never trip this, and a detail
+    // pair that happens to share a format just keeps today's behaviour -- so
+    // the D107 mip case is safe by construction.
+    if (rdp.tex_lod) {
+        const uint32_t fi = rdp.first_tile_index;
+        if (g_detail_base_tile && fi + 1 < 8 &&
+            rdp.texture_tile[fi + 1].tmem != rdp.texture_tile[fi].tmem &&
+            (rdp.texture_tile[fi + 1].fmt != rdp.texture_tile[fi].fmt ||
+             rdp.texture_tile[fi + 1].siz != rdp.texture_tile[fi].siz)) {
+            return 1;
+        }
+        return 0;
+    }
+    return i;
 }
 
 static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx, bool is_rect) {
@@ -1785,17 +1928,18 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx, bo
             return;
         }
 
-        /* D288 diag (M-152, frame-gated M-155): the silo intro's
-         * screen-filling stray triangle (bounded to level_20 frames
-         * ~562-741) isn't explained by this function's existing D233/D106
-         * guards on static review -- log any triangle whose clip-space NDC
-         * bbox covers an unreasonable chunk of the screen, or whose bbox
-         * math goes non-finite, together with each vertex's w and
-         * any_behind_camera, to catch it at draw time. M-155: the first
-         * ungated run fired 116k times in ~1500-2000 frames -- bbox_frac
-         * >0.15 alone is a common occurrence for ordinary near-camera
-         * geometry, not a distinguishing signature. Gated to the reported
-         * frame window (num_dls, same pattern as GE_D236RM below) and the
+        /* D288 diag (M-152, frame-gated M-155, any_behind-restricted
+         * M-155-follow-up): the silo intro's screen-filling stray triangle
+         * (bounded to level_20 frames ~562-741) isn't explained by this
+         * function's existing D233/D106 guards on static review -- log any
+         * triangle whose clip-space NDC bbox covers an unreasonable chunk
+         * of the screen, together with each vertex's w and the render-mode
+         * word (oml), to catch it at draw time. M-155: the first ungated
+         * run fired 116k times in ~1500-2000 frames -- bbox_frac >0.15
+         * alone is a common occurrence for ordinary near-camera geometry,
+         * not a distinguishing signature. Gated to the reported frame
+         * window (num_dls, the pattern the since-removed GE_D236RM
+         * probe also used) and the
          * threshold raised well above the ~0.15 "normal" baseline M-155
          * established, so a hit here is actually rare. Remove once D288 is
          * root-caused. */
@@ -1815,126 +1959,6 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx, bo
                             v1->color.r, v1->color.g, v1->color.b);
                 }
             }
-        }
-    }
-
-    /* D236 pass 10 (M-155, TEMP): does the 0x0c184b50 render-mode class's
-     * per-frame triangle count actually vary frame-to-frame WITHIN one
-     * deterministic -level_36 boot, or is D280's "run-to-run dependent"
-     * observation only visible ACROSS separate process launches (which
-     * would point at room-streaming state that isn't reset/seeded the
-     * same way twice, not at true per-frame nondeterminism)? Log the
-     * count once per display list (frame) while it's nonzero. Remove
-     * once D236 pass 10 concludes. */
-    static int s_d236rm = -1;
-    if (s_d236rm < 0) s_d236rm = getenv("GE_D236RM") != NULL;
-    if (s_d236rm) {
-        static uint32_t d236rm_last_dl = 0xFFFFFFFFu;
-        static uint32_t d236rm_count = 0;
-        extern uint32_t num_dls;
-        if (num_dls != d236rm_last_dl) {
-            if (d236rm_count != 0 || (num_dls % 300) == 0) {
-                fprintf(stderr, "D236RM dl=%u count=%u\n", d236rm_last_dl, d236rm_count);
-            }
-            d236rm_last_dl = num_dls;
-            d236rm_count = 0;
-        }
-        if (rdp.other_mode_l == 0x0c184b50u) {
-            d236rm_count++;
-        }
-    }
-
-    /* D236 pass 12 (M-191, TEMP): new angle, not tried by passes 1-11 (all of
-     * which focused on the tree-card class's z/w and instantiation counts).
-     * Both the noise "wall" (oml=0xc81049d8) and the discrete tree-card class
-     * (oml=0x0c184b50) decode to Z_CMP=1/Z_UPD=0/ZMODE=DEC (checked offline
-     * against both full oml words) -- NEITHER writes the depth buffer. Two
-     * no-z-write decals drawn against the same static (z-writing) background
-     * never actually depth-test against EACH OTHER: each is tested only
-     * against the background's z, so on-screen precedence between the two
-     * decals is decided purely by which one is submitted LAST in the frame's
-     * draw list, not by which one's own z/w is smaller (the z/w comparisons
-     * all 11 prior passes made are therefore not conclusive either way about
-     * visual winner). This probe tests that directly: track a per-frame
-     * submission-order counter (reset whenever num_dls changes, i.e. once
-     * per frame) and log the min/max order index seen for each of the two
-     * classes whenever num_dls changes and at least one of them appeared
-     * that frame -- if the noise class's order index is consistently HIGHER
-     * (drawn later) than the tree class's in frames where both appear, that
-     * directly explains "wall painted over trees" regardless of geometric
-     * depth, and points at a draw-order (not depth) bug. Remove once D236
-     * pass 12 concludes. */
-    static int s_d236order = -1;
-    if (s_d236order < 0) s_d236order = getenv("GE_D236ORDER") != NULL;
-    if (s_d236order) {
-        static uint32_t d236o_last_dl = 0xFFFFFFFFu;
-        static uint32_t d236o_seq = 0;
-        static uint32_t d236o_noise_min = 0, d236o_noise_max = 0, d236o_noise_n = 0;
-        static uint32_t d236o_tree_min = 0, d236o_tree_max = 0, d236o_tree_n = 0;
-        extern uint32_t num_dls;
-        if (num_dls != d236o_last_dl) {
-            if (d236o_noise_n != 0 || d236o_tree_n != 0) {
-                fprintf(stderr,
-                        "D236ORDER dl=%u noise_n=%u noise_order=[%u,%u] tree_n=%u tree_order=[%u,%u] "
-                        "tree_last_after_noise_last=%d\n",
-                        d236o_last_dl, d236o_noise_n, d236o_noise_min, d236o_noise_max,
-                        d236o_tree_n, d236o_tree_min, d236o_tree_max,
-                        (d236o_tree_n != 0 && d236o_noise_n != 0) ? (int) (d236o_tree_max > d236o_noise_max) : -1);
-            }
-            d236o_last_dl = num_dls;
-            d236o_seq = 0;
-            d236o_noise_min = d236o_noise_max = d236o_noise_n = 0;
-            d236o_tree_min = d236o_tree_max = d236o_tree_n = 0;
-        }
-        if (rdp.other_mode_l == 0xc81049d8u) {
-            if (d236o_noise_n == 0) d236o_noise_min = d236o_seq;
-            d236o_noise_max = d236o_seq;
-            d236o_noise_n++;
-        } else if (rdp.other_mode_l == 0x0c184b50u) {
-            if (d236o_tree_n == 0) d236o_tree_min = d236o_seq;
-            d236o_tree_max = d236o_seq;
-            d236o_tree_n++;
-        }
-        d236o_seq++;
-    }
-
-    /* D236 pass 14 (M-19x, TEMP): pass 13's live capture ruled out draw
-     * order as the dominant cause even in the favorable (tree-after-noise,
-     * high tri count) zone -- redirecting to whether the tree class's own
-     * per-vertex alpha (D280's "gfog=0, CPU-baked bimodal 25/255" census)
-     * is actually LOW (near-transparent) for the close/high-count trees the
-     * live capture walked through. This render mode's blend equation is a
-     * standard alpha-blend decal (FORCE_BL, GBL c1/c2 = CLR_IN,A_IN ->
-     * CLR_MEM,1-A_IN -- see include/PR/gbi.h RM_AA_ZB_XLU_DECAL), so if the
-     * combiner's alpha output tracks vertex/SHADE alpha directly, a card
-     * baked near 25/255 (~10%) would blend almost invisibly over whatever
-     * was drawn under it -- looking exactly like "the noise wall shows
-     * through" even with correct geometry and correct draw order. Logs,
-     * once per triangle of this class: each vertex's raw color.a, the
-     * combine_mode word (to see which alpha slot actually feeds the
-     * blend), and 1/w (a cheap camera-distance proxy) so alpha can be
-     * correlated against "close" vs "far" the same way pass 13's live
-     * capture was read. Zero cost unset. Remove once D236 pass 14
-     * concludes. */
-    static int s_d236alpha = -1;
-    if (s_d236alpha < 0) s_d236alpha = getenv("GE_D236ALPHA") != NULL;
-    if (s_d236alpha && rdp.other_mode_l == 0x0c184b50u) {
-        static uint32_t d236a_hits = 0;
-        static uint64_t d236a_last_combine = 0xFFFFFFFFFFFFFFFFull;
-        if (d236a_hits < 4000) {
-            if (rdp.combine_mode != d236a_last_combine) {
-                fprintf(stderr, "D236ALPHA combine_mode=0x%016llx\n",
-                        (unsigned long long)rdp.combine_mode);
-                d236a_last_combine = rdp.combine_mode;
-            }
-            fprintf(stderr,
-                    "D236ALPHA a=(%u,%u,%u) invw=(%.4f,%.4f,%.4f) vtxseg=0x%02x\n",
-                    v1->color.a, v2->color.a, v3->color.a,
-                    (v1->w != 0.f) ? 1.f / v1->w : 0.f,
-                    (v2->w != 0.f) ? 1.f / v2->w : 0.f,
-                    (v3->w != 0.f) ? 1.f / v3->w : 0.f,
-                    g_d236_last_vtx_seg);
-            d236a_hits++;
         }
     }
 
@@ -1976,25 +2000,6 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx, bo
     bool depth_test = ((rsp.geometry_mode & G_ZBUFFER) == G_ZBUFFER || (rdp.other_mode_l & G_ZS_PRIM) == G_ZS_PRIM) &&
                       ((rdp.other_mode_h & G_CYC_1CYCLE) == G_CYC_1CYCLE || (rdp.other_mode_h & G_CYC_2CYCLE) == G_CYC_2CYCLE);
     bool depth_update = (rdp.other_mode_l & Z_UPD) == Z_UPD;
-    /* D236 pass 12 (M-191, TEMP, diagnostic-only): both the noise "wall"
-     * (oml=0xc81049d8) and the discrete tree-card class (oml=0x0c184b50) are
-     * Z_CMP=1/Z_UPD=0 decals, and GE_D236ORDER above shows the noise class is
-     * ALWAYS submitted after the tree class in every sampled frame -- with
-     * neither writing depth, later-submitted always wins the color buffer
-     * regardless of which is geometrically closer. This experiment forces
-     * depth_update=true for the tree-card class ONLY, so it writes real
-     * depth; if the noise class (submitted later, same depth_compare=LEQUAL)
-     * now correctly fails its depth test against the tree cards' nearer z
-     * instead of overwriting them, that confirms draw-order+no-z-write is
-     * the actual visual-precedence mechanism. NOT a proposed fix (forcing
-     * z-write for a decal-mode class is not decomp-faithful either) -- purely
-     * to test the mechanism cheaply before deciding what a real fix looks
-     * like. Remove once D236 pass 12 concludes. */
-    static int s_d236zfix = -1;
-    if (s_d236zfix < 0) s_d236zfix = getenv("GE_D236ZFIX") != NULL;
-    if (s_d236zfix && rdp.other_mode_l == 0x0c184b50u) {
-        depth_update = true;
-    }
     bool depth_compare = (rdp.other_mode_l & Z_CMP) == Z_CMP;
     bool depth_source_prim = (rdp.other_mode_l & G_ZS_PRIM) == G_ZS_PRIM /* && gDP.primDepth.z == 1.0f */;
     uint16_t zmode = rdp.other_mode_l & ZMODE_DEC;
@@ -2130,6 +2135,22 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx, bo
                     break;
             }
             tex_width[i] = line_size;
+            /* D245 (M-201): D229 water (RGBA16 tile over a CI8 load) is
+             * imported as CI8 -- one byte per texel, base level only -- so the
+             * UV normalisation must use that geometry: width = line bytes
+             * (32, not 32/2 = 16, which doubled the S frequency) and height =
+             * the mask period (32, not 1400/32 = 43 rows of mip chain). */
+            {
+                static int d245_oldtex2 = -1;
+                if (d245_oldtex2 < 0) d245_oldtex2 = getenv("GE_D245_OLDTEX") != NULL;
+                const auto& ltx = rdp.loaded_texture[rdp.texture_tile[tile].tmem];
+                if (!d245_oldtex2 && rdp.texture_tile[tile].fmt == G_IM_FMT_RGBA &&
+                    rdp.texture_tile[tile].siz == G_IM_SIZ_16b && ltx.src_fmt == G_IM_FMT_CI) {
+                    const uint8_t mkt = rdp.texture_tile[tile].maskt;
+                    tex_width[i] = rdp.texture_tile[tile].line_size_bytes;
+                    if (mkt > 0 && mkt < 12 && tex_height[i] > (1u << mkt)) tex_height[i] = 1u << mkt;
+                }
+            }
 
             tex_width2[i] = (rdp.texture_tile[tile].lrs - rdp.texture_tile[tile].uls + 4) / 4;
             tex_height2[i] = (rdp.texture_tile[tile].lrt - rdp.texture_tile[tile].ult + 4) / 4;
@@ -3059,6 +3080,28 @@ static void gfx_draw_rectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_t lr
     uly += rdp.subpixel_ofs_y;
     lry += rdp.subpixel_ofs_y;
 
+    // D397: the N64 RDP floors the U10.2 top/bottom edges of a texture rect to
+    // whole scanlines before its per-scanline coverage test, so a rect covers
+    // scanlines [floor(uly/4), floor((lry-1)/4]]. A rect whose height is not a
+    // whole number of native pixels therefore rasterizes to a whole number of
+    // scanlines on hardware at every window scale. The gun-barrel / file-select
+    // gradient is built from 0.75px-tall row strips (title2.c: uly=(i+12)<<2,
+    // lry=((i+13)<<2)-1 -> 0.75px tall at 1px pitch); on the RDP each strip is
+    // exactly one scanline. The continuous-NDC conversion below instead passes
+    // the fractional bottom edge straight to the GPU, whose coverage test
+    // aliases the 0.75px pitch into a visible "comb" (H2: period fixed in
+    // native rows, ~3 = the 0.75px-at-1px-pitch beat, window period = 3*scale).
+    // Snap the top/bottom edges to the RDP scanline range so a sub-pixel strip
+    // rasterizes to exactly the scanline it targets. No-op for whole-pixel
+    // rects (edges already multiples of 4) and for the copy-mode +1<<2 edge
+    // (already a whole scanline), so normal fills are unchanged.
+    if (lry > uly) {
+        const int32_t top_scan = uly >> 2;
+        const int32_t bot_scan = (lry - 1) >> 2;
+        uly = top_scan << 2;
+        lry = (bot_scan + 1) << 2;
+    }
+
     // U10.2 coordinates
     float ulxf = ulx;
     float ulyf = uly;
@@ -3121,8 +3164,36 @@ static void gfx_draw_rectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_t lr
     }
 }
 
+/* D226: HUD span scale (G_HUDSCALE_EXT, emitted by port/include/hudaspect.h
+ * PORT_HUD_SCALE around specific HUD draws). While active, every rectangle
+ * (text glyphs, message boxes, ammo icons are all rects) is scaled about the
+ * anchor in logical 10.2 screen space, and texrect steps are divided by the
+ * scale so the same texels cover the larger/smaller rect. 1.0 = inactive. */
+static float s_hud_scale = 1.0f;
+static int32_t s_hud_ax = 0, s_hud_ay = 0;   /* anchor, 10.2 fixed (px*4) */
+
+static inline void gfx_hud_scale_rect(int32_t& ulx, int32_t& uly, int32_t& lrx, int32_t& lry) {
+    if (s_hud_scale == 1.0f) {
+        return;
+    }
+    ulx = s_hud_ax + (int32_t)lroundf((float)(ulx - s_hud_ax) * s_hud_scale);
+    lrx = s_hud_ax + (int32_t)lroundf((float)(lrx - s_hud_ax) * s_hud_scale);
+    uly = s_hud_ay + (int32_t)lroundf((float)(uly - s_hud_ay) * s_hud_scale);
+    lry = s_hud_ay + (int32_t)lroundf((float)(lry - s_hud_ay) * s_hud_scale);
+    /* A full-width box (e.g. the dialogue backdrop, 0..W) scaled about a
+     * centre anchor goes negative; negative rect coords are not drawn, so
+     * clip at the canvas origin (the right/bottom overhang is harmless). */
+    if (ulx < 0) ulx = 0;
+    if (uly < 0) uly = 0;
+}
+
 static void gfx_dp_texture_rectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_t lry, uint8_t tile, int16_t uls,
                                      int16_t ult, int16_t dsdx, int16_t dtdy, bool flip) {
+    if (s_hud_scale != 1.0f) {   /* D226 */
+        gfx_hud_scale_rect(ulx, uly, lrx, lry);
+        dsdx = (int16_t)lroundf((float)dsdx / s_hud_scale);
+        dtdy = (int16_t)lroundf((float)dtdy / s_hud_scale);
+    }
     uint64_t saved_combine_mode = rdp.combine_mode;
     if ((rdp.other_mode_h & (3U << G_MDSFT_CYCLETYPE)) == G_CYC_COPY) {
         // Per RDP Command Summary Set Tile's shift s and this dsdx should be set to 4 texels
@@ -3189,7 +3260,9 @@ static void gfx_dp_texture_rectangle(int32_t ulx, int32_t uly, int32_t lrx, int3
     }
     rdp.first_tile_index = tile;
 
+    s_in_texrect = true;
     gfx_draw_rectangle(ulx, uly, lrx, lry);
+    s_in_texrect = false;
     if (saved_tile != tile) {
         rdp.textures_changed[0] = true;
         rdp.textures_changed[1] = true;
@@ -3235,7 +3308,9 @@ static void gfx_dp_image_rectangle(int32_t tile, int32_t w, int32_t h,
     }
     rdp.first_tile_index = tile;
 
+    s_in_texrect = true;
     gfx_draw_rectangle(ulx, uly, lrx, lry);
+    s_in_texrect = false;
     if (saved_tile != tile) {
         rdp.textures_changed[0] = true;
         rdp.textures_changed[1] = true;
@@ -3246,6 +3321,7 @@ static void gfx_dp_image_rectangle(int32_t tile, int32_t w, int32_t h,
 }
 
 static void gfx_dp_fill_rectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_t lry) {
+    gfx_hud_scale_rect(ulx, uly, lrx, lry);   /* D226 */
     if (rdp.color_image_address == rdp.z_buf_address) {
         // Don't clear Z buffer here since we already did it with glClear
         return;
@@ -3315,6 +3391,38 @@ static void gfx_sp_set_vertex_colors(uint32_t count, const struct NormalColor *v
 static void gfx_dp_set_other_mode(uint32_t h, uint32_t l) {
     rdp.other_mode_h = h;
     rdp.other_mode_l = l;
+}
+
+/* D245 (M-201): G_FLOATVTX_EXT loader -- gfx_sp_vertex for pre-transformed
+ * clip-space float vertices with float S/T (see port/include/floatvtx.h).
+ * Only the unlit, unfogged path the sky/water fans use is supported. */
+static void gfx_sp_vertex_float(size_t n_vertices, size_t dest_index, const PortFloatVtx* vertices) {
+    if (!fast3d_ptr_ok(vertices) || dest_index + n_vertices > MAX_VERTICES) {
+        return;
+    }
+    for (size_t i = 0; i < n_vertices; i++, dest_index++) {
+        const PortFloatVtx* v = &vertices[i];
+        struct LoadedVertex* d = &rsp.loaded_vertices[dest_index];
+        float x = gfx_adjust_x_for_aspect_ratio(v->x, v->w);
+        float y = v->y, z = v->z, w = v->w;
+        d->u = v->s * (float)rsp.texture_scaling_factor.s / 65536.0f;
+        d->v = v->t * (float)rsp.texture_scaling_factor.t / 65536.0f;
+        d->color.r = v->r;
+        d->color.g = v->g;
+        d->color.b = v->b;
+        d->color.a = v->a;
+        d->clip_rej = 0;
+        if (x < -w) d->clip_rej |= 1;
+        if (x > w) d->clip_rej |= 2;
+        if (y < -w) d->clip_rej |= 4;
+        if (y > w) d->clip_rej |= 8;
+        if (z > w) d->clip_rej |= 32;
+        d->x = x;
+        d->y = y;
+        d->z = z;
+        d->w = w;
+        d->fog = rdp.fog_color.a;
+    }
 }
 
 static inline void *seg_addr(uintptr_t w1) {
@@ -3442,18 +3550,6 @@ static void gfx_run_dl(Gfx* cmd) {
                 gfx_sp_texture(C1(16, 16), C1(0, 16), C0(11, 3), C0(8, 3), C0(0, 8));
                 break;
             case G_VTX:
-                /* D236 pass 16 (TEMP): pass 15's GE_D236RAW dump proved every
-                 * room-background Vtx (g_BgRoomInfo[].vertices) is alpha=255
-                 * on load -- so the tree class's <=36/255 alpha measured at
-                 * draw time (GE_D236ALPHA) can't be coming from that static
-                 * table. Record which segment (top byte of the raw segmented
-                 * address) the most recent G_VTX load came from, so the next
-                 * triangle-time probe can report it -- distinguishes "still
-                 * room background, something else touches it after load" from
-                 * "not room background at all" (a different segment, e.g. a
-                 * model/CPU-built-quad source) without guessing from source
-                 * review alone. Remove once D236 pass 16 concludes. */
-                g_d236_last_vtx_seg = (uint8_t)(cmd->words.w1 >> 24);
                 gfx_sp_vertex(C0(0, 16) / sizeof(Vtx), C0(16, 4), (const Vtx*)seg_addr(cmd->words.w1));
                 break;
             case G_DL: {
@@ -3478,6 +3574,17 @@ static void gfx_run_dl(Gfx* cmd) {
             case (uint8_t)G_CLEARGEOMETRYMODE:
                 gfx_sp_geometry_mode(cmd->words.w1, 0);
                 break;
+            case G_FLOATVTX_EXT: /* D245 */
+                gfx_sp_vertex_float(C0(0, 16), C0(16, 8), (const PortFloatVtx*)seg_addr(cmd->words.w1));
+                break;
+            case 0x46: /* G_HUDSCALE_EXT (D226): w0 low16 = scale*256 (0/256 = off), w1 = ax4<<16 | ay4 */
+            {
+                const uint32_t sc = C0(0, 16);
+                s_hud_scale = (sc == 0 || sc == 256) ? 1.0f : (float)sc / 256.0f;
+                s_hud_ax = (int32_t)C1(16, 16);
+                s_hud_ay = (int32_t)C1(0, 16);
+                break;
+            }
             case G_EXTRAGEOMETRYMODE_EXT:
                 gfx_sp_extra_geometry_mode(~C0(0, 24), cmd->words.w1);
                 break;
@@ -3851,6 +3958,16 @@ extern "C" void gfx_start_frame(void) {
 
 uint32_t num_dls = 0;
 
+/* D252 TEMP: see s_d157BurstUntil. No-op unless GE_D157 is set. */
+extern "C" void gfxD157Burst(void) {
+    static int on = -1;
+    if (on < 0) on = getenv("GE_D157") != NULL;
+    if (!on) return;
+    s_d157BurstUntil = num_dls + 90;
+    sysLogPrintf(LOG_NOTE, "D157 burst: F12 at frame=%u, full logging to frame=%u",
+                 num_dls, (uint32_t)s_d157BurstUntil);
+}
+
 /* F10 port-layer options overlay (port/src/optionsoverlay.c). Returns a
  * self-contained 2D display list to draw on top of the game's frame, or NULL
  * when the overlay is closed -- in which case nothing is appended and the
@@ -3858,6 +3975,7 @@ uint32_t num_dls = 0;
 extern "C" Gfx* optionsOverlayEmit(void);
 
 extern "C" void gfx_run(Gfx* commands) {
+    s_hud_scale = 1.0f;   /* D226: never carry a HUD scale across frames */
     ++num_dls;
     gfx_sp_reset();
 
@@ -3945,6 +4063,8 @@ extern "C" void gfx_set_mipmap_filter(enum MipmapFilteringMode mode) {
 }
 
 extern "C" void gfx_set_fix_mip_textures(int on) { g_fix_mip_textures = !!on; }
+
+extern "C" void gfx_set_detail_base_tile(int on) { g_detail_base_tile = !!on; }
 
 /* D212: expose the (already-implemented) rendering-API anisotropy hook to the
  * port layer. Clamp to [1, GL max] so a stale ini value can't feed an invalid
