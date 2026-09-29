@@ -972,7 +972,11 @@ Gfx *optionsOverlayEmit(void)
     /* ---- pass 2: text ---- */
     gdl = microcode_constructor(gdl);
 
+#if defined(__vita__)
+    gdl = drawText(gdl, OV_X0, OV_TOP, "VITA OPTIONS", 0xffe040ff);
+#else
     gdl = drawText(gdl, OV_X0, OV_TOP, "PC OPTIONS", 0xffe040ff);
+#endif
     gdl = drawText(gdl, OV_X0, OV_TOP + OV_LINE,
                    "select: scroll/click, change: mouse/arrows",
                    0x8890a0ff);                                        /* hint line */

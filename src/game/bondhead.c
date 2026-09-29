@@ -41,7 +41,12 @@ void bheadSetdamp(f32 headdamp);
 
 void bheadFlipAnimation()
 {
+#ifdef PORT
+    /* N64 animFlipFlag/field_5C0 alias the inline gait Model's gunhand/animframe1. */
+    g_CurrentPlayer->model.gunhand = !g_CurrentPlayer->model.gunhand;
+#else
     g_CurrentPlayer->animFlipFlag = !g_CurrentPlayer->animFlipFlag;
+#endif
 }
 
 void bheadUpdateIdleRoll()
@@ -410,7 +415,11 @@ void bheadAdjustAnimation(f32 speed)
 
                 if (g_CurrentPlayer->headanim >= 0)
                 {
+#ifdef PORT
+                    startframe = (g_CurrentPlayer->model.animframe1 - g_BondMoveAnimationSetup[g_CurrentPlayer->headanim].loopframe)
+#else
                     startframe = (g_CurrentPlayer->field_5C0 - g_BondMoveAnimationSetup[g_CurrentPlayer->headanim].loopframe)
+#endif
                         / (g_BondMoveAnimationSetup[g_CurrentPlayer->headanim].endframe - g_BondMoveAnimationSetup[g_CurrentPlayer->headanim].loopframe);
 
                     startframe = g_BondMoveAnimationSetup[i].loopframe + ((g_BondMoveAnimationSetup[i].endframe - g_BondMoveAnimationSetup[i].loopframe) * startframe);
@@ -420,7 +429,11 @@ void bheadAdjustAnimation(f32 speed)
                     &g_CurrentPlayer->model,
                     // match hack: addu address backwards
                     (struct ModelAnimation *) ((s32)g_BondMoveAnimationSetup[i].anim_id + (s32)&ptr_animation_table->data),
+#ifdef PORT
+                    (s32) g_CurrentPlayer->model.gunhand,
+#else
                     (s32) g_CurrentPlayer->animFlipFlag,
+#endif
                     startframe,
                     0.5f,
                     12.0f);
