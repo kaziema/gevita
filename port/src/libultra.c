@@ -235,9 +235,7 @@ static void portHeartbeatCheck(void)
     static int fired = 0;
     uint64_t now = sysGetMicroseconds();
 #if defined(__vita__)
-    /* Stall = time since the frame counter last moved, on this thread's own clock.
-     * Reading g_lastFrameUs cross-thread raced (and tears on 32-bit): now < last
-     * wrapped to a huge "stall" and forced a dump mid-game. */
+    /* Track frame-counter progress on this thread's clock; cross-thread u64 reads raced. */
     static int seenFrames = -1;
     static uint64_t progressUs;
     int frames = *(volatile int *)&g_framesRendered;
@@ -254,7 +252,7 @@ static void portHeartbeatCheck(void)
     if (fired < 3 && stalled > 8000000 && now - g_lastHeartbeatUs > 5000000) {
 #if defined(__vita__)
         {
-            /* A slow SceShaccCg compile is not a hang: report it, give it 60 s before dumping. */
+            /* Slow shader compile isn't a hang: allow 60 s. */
             extern volatile int g_glCompileShader;
             extern volatile uint64_t g_glCompileSinceUs;
             int sh = g_glCompileShader;
@@ -1500,8 +1498,37 @@ void osSpTaskStartGo(OSTask *t)
         uint64_t t0 = sysGetMicroseconds();
         videoStartFrame();
         gfx_run((Gfx *)t->t.data_ptr);
+#if defined(__vita__)
+        uint64_t tRun = sysGetMicroseconds();
+#endif
         videoEndFrame();
         g_lastFrameUs = sysGetMicroseconds();
+#if defined(__vita__)
+        {
+            /* Every 300 frames: game time between frames, display-list CPU time, swap time, GPU load. */
+            extern void vitaGfxStatsTake(unsigned *, unsigned *, unsigned *, unsigned *, unsigned *);
+            static uint64_t lastEnd, sGap, sRun, sSwap, mGap, mRun, mSwap;
+            static unsigned n, sDraws, sTris, sUp, sUpKB, sSw, mDraws, mUpKB;
+            uint64_t gap = lastEnd ? t0 - lastEnd : 0, run = tRun - t0, swap = g_lastFrameUs - tRun;
+            unsigned d, tr, up, upKB, sw;
+            vitaGfxStatsTake(&d, &tr, &up, &upKB, &sw);
+            lastEnd = g_lastFrameUs;
+            sGap += gap; sRun += run; sSwap += swap;
+            if (gap > mGap) mGap = gap;
+            if (run > mRun) mRun = run;
+            if (swap > mSwap) mSwap = swap;
+            sDraws += d; sTris += tr; sUp += up; sUpKB += upKB; sSw += sw;
+            if (d > mDraws) mDraws = d;
+            if (upKB > mUpKB) mUpKB = upKB;
+            if (++n == 300) {
+                sysLogPrintf(LOG_NOTE, "[perf] avg/max ms: game %.1f/%.1f dl %.1f/%.1f swap %.1f/%.1f | per frame: draws %u (max %u) tris %u shader sw %u tex uploads %u (%u KB, max %u KB)",
+                             sGap / 300000.0, mGap / 1000.0, sRun / 300000.0, mRun / 1000.0, sSwap / 300000.0, mSwap / 1000.0,
+                             sDraws / 300, mDraws, sTris / 300, sSw / 300, sUp / 300, sUpKB / 300, mUpKB);
+                n = 0; sGap = sRun = sSwap = mGap = mRun = mSwap = 0;
+                sDraws = sTris = sUp = sUpKB = sSw = mDraws = mUpKB = 0;
+            }
+        }
+#endif
         if (++g_framesRendered <= 5 || (g_framesRendered % 300) == 0)
             sysLogPrintf(LOG_NOTE, "frame %d rendered in %llu us",
                          g_framesRendered,

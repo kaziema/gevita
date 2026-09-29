@@ -368,7 +368,7 @@ static void videoDrainWindowRequests(void)
     }
     winReqKind = 0;
 #if defined(__vita__)
-    /* Fixed 960x544 panel: window size / fullscreen changes only shrink the image. */
+    /* Fixed 960x544 panel. */
     return;
 #endif
 
@@ -427,7 +427,7 @@ int videoInit(void)
 #endif
 
 #if defined(__vita__)
-    /* Always native size on Vita; ignore window/fullscreen values saved by older builds. */
+    /* Always native size; ignore saved window values. */
     cfgWinW = cfgWinH = 0;
     cfgFullscreen = 0;
     cfgWinMax = 0;

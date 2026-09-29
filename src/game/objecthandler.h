@@ -16,7 +16,7 @@ struct bondstruct_unk_op07_related {
     s32 unk0C;
 };
 
-/* Vita is 32-bit: struct Model has the N64 layout, so the N64 slot layout below is the matching pun. */
+/* Vita Model has the N64 layout, so use the N64 slot pun. */
 #if defined(PORT) && !defined(__vita__)
 /* PC port (D53.2): the game type-puns these slot structs with struct Model —
  * model.c does `(Model *)&g_ModelSlots[i]` / `(Model *)&g_AnimModelSlots[i]`

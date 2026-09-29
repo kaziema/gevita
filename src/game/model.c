@@ -958,7 +958,7 @@ f32 getinstsize(Model *arg0)
 #if defined(__vita__)
     if (arg0 == NULL || arg0->obj == NULL)
     {
-        /* A model with no header here means its slot was freed or double-assigned: log the caller, don't fault. */
+        /* Null model header: log caller, don't fault. */
         static int nBad = 0;
         if (nBad++ < 32)
             sysLogPrintf(LOG_ERROR, "[model] getinstsize on model=%p obj=NULL caller=%p",
@@ -1254,7 +1254,7 @@ void sub_GAME_7F06D490(Model *model, ModelNode *modelNode)
     rw->Header.pos.z = sp2c.z;
 #if defined(__vita__)
     {
-        /* Guards render sunk: root y (anim) vs ground vs final, per chr model, a few samples each. */
+        /* Guard root height samples. */
         static Model *seen[8];
         static int count[8];
         static int tick;
@@ -2897,10 +2897,20 @@ u32 g_vitaAnimTableSize;
 void modelSetAnimation(Model *model, ModelAnimation *modelAnimation, s32 flip, f32 startframe, f32 speed, f32 merge) {
 #if defined(__vita__)
     {
-        /* An anim outside the animation table is a bad table entry: log the caller and skip. */
+        /* Anim outside the table: log caller and skip. */
         static int nBad = 0;
         uintptr_t base = (uintptr_t)ptr_animation_table;
         uintptr_t a = (uintptr_t)modelAnimation;
+        if (!__builtin_isfinite(speed) || !__builtin_isfinite(startframe) || !__builtin_isfinite(merge)) {
+            static int nNan = 0;
+            if (nNan++ < 32)
+                sysLogPrintf(LOG_ERROR, "[nan] modelSetAnimation model=%p startframe=%g speed=%g merge=%g caller=%p",
+                             (void *)model, (double)startframe, (double)speed, (double)merge,
+                             __builtin_return_address(0));
+            if (!__builtin_isfinite(speed)) speed = 0.5f;
+            if (!__builtin_isfinite(startframe)) startframe = 0.0f;
+            if (!__builtin_isfinite(merge)) merge = 0.0f;
+        }
         if (a < base || a + sizeof(ModelAnimation) > base + g_vitaAnimTableSize) {
             if (nBad++ < 32)
                 sysLogPrintf(LOG_ERROR, "[anim] bad anim %p (table %p+0x%x) model=%p caller=%p",
@@ -3007,6 +3017,19 @@ void sub_GAME_7F06FE44(Model *model, s32 arg1) {
 }
 
 void modelSetAnimSpeed(Model *model, f32 anim_speed, f32 startframe) {
+#if defined(__vita__)
+    if (!__builtin_isfinite(anim_speed) || !__builtin_isfinite(startframe)) {
+        /* Non-finite speed: log caller, keep current speed. */
+        static int nBad = 0;
+        if (nBad++ < 32)
+            sysLogPrintf(LOG_ERROR, "[nan] modelSetAnimSpeed model=%p speed=%g startframe=%g caller=%p",
+                         (void *)model, (double)anim_speed, (double)startframe, __builtin_return_address(0));
+        if (!__builtin_isfinite(anim_speed))
+            anim_speed = __builtin_isfinite(model->speed) ? model->speed : 0.5f;
+        if (!__builtin_isfinite(startframe))
+            startframe = 0.0f;
+    }
+#endif
 #ifdef PORT
     /* D243 M-180: log all modelSetAnimSpeed calls during scripted camera modes
      * to identify if unusual speed values are being set during cutscenes.

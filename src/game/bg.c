@@ -831,7 +831,15 @@ s32 getPointTableBinCount(s32 room)
  * Address: 0x7F0B4124
 */
 #if defined(__vita__)
-#define BGSTEP(name) osSyncPrintf("[lvl] bg %s\n", name)
+extern unsigned long long sysGetMicroseconds(void);
+static unsigned long long s_bgStepUs;
+static void vitaBgStep(const char *name)
+{
+    unsigned long long now = sysGetMicroseconds();
+    osSyncPrintf("[lvl] bg %s (+%u ms)\n", name, s_bgStepUs ? (unsigned)((now - s_bgStepUs) / 1000) : 0);
+    s_bgStepUs = now;
+}
+#define BGSTEP(name) vitaBgStep(name)
 #else
 #define BGSTEP(name) do { } while (0)
 #endif
@@ -5970,7 +5978,7 @@ void sub_GAME_7F0BA2D4(coord3d *bbmin, coord3d *bbmax, s32 *room_list, s32 *coun
                     }
                     
 #ifdef PORT
-                    /* N64 read three adjacent s32 globals as one coord3d; set the same FLT_MAX / -FLT_MAX values directly. */
+                    /* Don't read adjacent globals as a coord3d. */
                     portal_min.f[0] = portal_min.f[1] = portal_min.f[2] = 3.40282347e38f;
                     portal_max.f[0] = portal_max.f[1] = portal_max.f[2] = -3.40282347e38f;
 #else

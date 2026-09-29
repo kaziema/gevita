@@ -17,6 +17,7 @@
 #if defined(__vita__)
 #include <string.h>
 #include <malloc.h>
+#include <sys/stat.h>
 #include "vita_gl_compat.h"
 #else
 #include "glad/glad.h"
@@ -108,11 +109,86 @@ static uint32_t s_texW[2] = { 1, 1 }, s_texH[2] = { 1, 1 };
 static int s_curTile = 0;
 static struct ShaderProgram* s_curPrg = nullptr;
 
-/* Shader being built right now (0 = none) and since when; the kernel heartbeat reads these. */
+/* Shader being compiled (0 = none), read by the heartbeat. */
 extern "C" volatile int g_glCompileShader;
 extern "C" volatile uint64_t g_glCompileSinceUs;
 volatile int g_glCompileShader = 0;
 volatile uint64_t g_glCompileSinceUs = 0;
+
+/* Per-frame renderer counters, drained by the frame-timing log in libultra.c. */
+static unsigned s_statDraws, s_statTris, s_statUploads, s_statUploadBytes, s_statSwitches;
+extern "C" void vitaGfxStatsTake(unsigned* draws, unsigned* tris, unsigned* uploads, unsigned* uploadKB, unsigned* switches) {
+    *draws = s_statDraws; *tris = s_statTris; *uploads = s_statUploads;
+    *uploadKB = s_statUploadBytes / 1024; *switches = s_statSwitches;
+    s_statDraws = s_statTris = s_statUploads = s_statUploadBytes = s_statSwitches = 0;
+}
+
+/* Compiled-program cache in ux0:data: each shader compiles once, ever. */
+#define VITA_SHADER_CACHE_DIR "ux0:data/GoldenEye007/shadercache"
+static uint64_t vitaShaderKey(const char* vs, const char* fs) {
+    uint64_t h = 1469598103934665603ULL;
+    for (const char* s = vs; *s; s++) h = (h ^ (uint8_t)*s) * 1099511628211ULL;
+    h = (h ^ 0xff) * 1099511628211ULL;
+    for (const char* s = fs; *s; s++) h = (h ^ (uint8_t)*s) * 1099511628211ULL;
+    return h;
+}
+
+static void vitaShaderCachePath(char* out, size_t n, uint64_t key) {
+    snprintf(out, n, VITA_SHADER_CACHE_DIR "/%016llx.bin", (unsigned long long)key);
+}
+
+static GLuint vitaShaderCacheLoad(uint64_t key) {
+    char path[128];
+    vitaShaderCachePath(path, sizeof(path), key);
+    FILE* f = fopen(path, "rb");
+    if (!f) return 0;
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    void* buf = len > 0 ? malloc(len) : NULL;
+    bool ok = buf && fread(buf, 1, len, f) == (size_t)len;
+    fclose(f);
+    GLuint prog = 0;
+    if (ok) {
+        prog = glCreateProgram();
+        glProgramBinary(prog, 0, buf, (GLsizei)len);
+        GLint linked = 0;
+        glGetProgramiv(prog, GL_LINK_STATUS, &linked);
+        if (!linked) {
+            sysLogPrintf(LOG_WARNING, "[shader] cache entry %s failed to link, recompiling", path);
+            glDeleteProgram(prog);
+            prog = 0;
+        }
+    }
+    free(buf);
+    return prog;
+}
+
+static void vitaShaderCacheSave(uint64_t key, GLuint prog) {
+    static bool dirMade = false;
+    if (!dirMade) {
+        mkdir(VITA_SHADER_CACHE_DIR, 0777);
+        dirMade = true;
+    }
+    GLint len = 0;
+    glGetProgramiv(prog, GL_PROGRAM_BINARY_LENGTH, &len);
+    if (len <= 0) return;
+    void* buf = malloc(len);
+    if (!buf) return;
+    GLsizei got = 0;
+    GLenum fmt = 0;
+    glGetProgramBinary(prog, len, &got, &fmt, buf);
+    char path[128];
+    vitaShaderCachePath(path, sizeof(path), key);
+    FILE* f = fopen(path, "wb");
+    if (f) {
+        fwrite(buf, 1, got, f);
+        fclose(f);
+    } else {
+        sysLogPrintf(LOG_WARNING, "[shader] could not write %s", path);
+    }
+    free(buf);
+}
 
 /* Remove the first exact occurrence of line from buf. */
 static void vitaStripLine(char* buf, size_t* len, const char* line) {
@@ -161,6 +237,7 @@ static void gfx_opengl_load_shader(struct ShaderProgram* new_prg) {
     // if (!new_prg) return;
     glUseProgram(new_prg->opengl_program_id);
 #if defined(__vita__)
+    s_statSwitches++;
     s_curPrg = new_prg;
 #endif
     gfx_opengl_vertex_array_set_attribs(new_prg);
@@ -391,7 +468,7 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     // Reference approach to color wrapping as per GLideN64
     // Return wrapped value of x in interval [low, high)
 #if defined(__vita__)
-    /* vitaGL maps mod() to CG fmod(), which differs for negatives; spell out GLSL mod. */
+    /* vitaGL maps mod() to fmod(); spell out GLSL mod. */
     append_line(fs_buf, &fs_len, "#define WRAP(x, low, high) ((x) - ((high)-(low)) * floor(((x)-(low)) / ((high)-(low))))");
 #else
     append_line(fs_buf, &fs_len, "#define WRAP(x, low, high) mod((x)-(low), (high)-(low)) + (low)");
@@ -438,7 +515,7 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
 
     bool needs_noise = true;
 #if defined(__vita__)
-    /* Dead noise code still costs SceShaccCg time; emit it only when referenced. */
+    /* Emit noise code only when used. */
     needs_noise = cc_features.opt_noise;
     for (int c = 0; c < 2; c++)
         for (int a = 0; a < 2; a++)
@@ -633,7 +710,7 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     fs_buf[fs_len] = '\0';
 
 #if defined(__vita__)
-    /* Drop combiner inputs the FS never reads (shader #20 hung SceShaccCg with one). */
+    /* Drop inputs the FS never reads. */
     for (int i = 0; i < cc_features.num_inputs; i++) {
         char name[16], line[64];
         int uses = 0;
@@ -656,27 +733,29 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     GLint success;
 
     static int nShaders = 0;
-    {
-        /* If vitaGL dies inside its GLSL translator, the last one of these names the shader. */
-        if (++nShaders <= 64) {
-#if defined(__vita__)
-            struct mallinfo mi = mallinfo();
-            sysLogPrintf(LOG_INFO, "[shader] #%d compiling id %llx/%x (vs %d B, fs %d B) heap used %u KB, vgl ram free %u KB",
-                         nShaders, (unsigned long long)shader_id0, shader_id1, (int)vs_len, (int)fs_len,
-                         (unsigned)(mi.uordblks / 1024), (unsigned)(vglMemFree(VGL_MEM_RAM) / 1024));
-            fprintf(stderr, "---- vs #%d ----\n%s---- fs #%d ----\n%s---- end #%d ----\n",
-                    nShaders, vs_buf, nShaders, fs_buf, nShaders);
-#else
-            sysLogPrintf(LOG_INFO, "[shader] #%d compiling id %llx/%x (vs %d B, fs %d B)",
-                         nShaders, (unsigned long long)shader_id0, shader_id1, (int)vs_len, (int)fs_len);
-#endif
-        }
-    }
+    ++nShaders;
+    GLuint shader_program = 0;
 #if defined(__vita__)
     uint64_t t0 = sysGetMicroseconds();
-    g_glCompileShader = nShaders;
-    g_glCompileSinceUs = t0;
+    uint64_t cacheKey = vitaShaderKey(vs_buf, fs_buf);
+    shader_program = vitaShaderCacheLoad(cacheKey);
+    if (shader_program) {
+        sysLogPrintf(LOG_INFO, "[shader] #%d id %llx/%x loaded from cache in %u ms", nShaders,
+                     (unsigned long long)shader_id0, shader_id1, (unsigned)((sysGetMicroseconds() - t0) / 1000));
+    } else {
+        struct mallinfo mi = mallinfo();
+        sysLogPrintf(LOG_INFO, "[shader] #%d compiling id %llx/%x (vs %d B, fs %d B) heap used %u KB, vgl ram free %u KB",
+                     nShaders, (unsigned long long)shader_id0, shader_id1, (int)vs_len, (int)fs_len,
+                     (unsigned)(mi.uordblks / 1024), (unsigned)(vglMemFree(VGL_MEM_RAM) / 1024));
+        g_glCompileShader = nShaders;
+        g_glCompileSinceUs = t0;
+    }
+#else
+    if (nShaders <= 64)
+        sysLogPrintf(LOG_INFO, "[shader] #%d compiling id %llx/%x (vs %d B, fs %d B)",
+                     nShaders, (unsigned long long)shader_id0, shader_id1, (int)vs_len, (int)fs_len);
 #endif
+    if (!shader_program) {
     GLuint vertex_shader = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(vertex_shader, 1, &sources[0], &lengths[0]);
     glCompileShader(vertex_shader);
@@ -703,7 +782,7 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
         sysFatalError("Fragment shader compilation failed:\n%s", error_log);
     }
 
-    GLuint shader_program = glCreateProgram();
+    shader_program = glCreateProgram();
     glAttachShader(shader_program, vertex_shader);
     glAttachShader(shader_program, fragment_shader);
     glLinkProgram(shader_program);
@@ -719,6 +798,8 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     g_glCompileShader = 0;
     sysLogPrintf(LOG_INFO, "[shader] #%d built in %u ms (link %s)", nShaders,
                  (unsigned)((sysGetMicroseconds() - t0) / 1000), success ? "ok" : "FAILED");
+    if (success)
+        vitaShaderCacheSave(cacheKey, shader_program);
 #endif
 
 #if !defined(__vita__)
@@ -727,6 +808,7 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
 #endif
     glDeleteShader(vertex_shader);
     glDeleteShader(fragment_shader);
+    }
 
     size_t cnt = 0;
 
@@ -857,6 +939,8 @@ static void gfx_opengl_select_texture(int tile, GLuint texture_id, bool linear_f
 
 static void gfx_opengl_upload_texture(const uint8_t* rgba32_buf, uint32_t width, uint32_t height, bool gen_mipmaps) {
 #if defined(__vita__)
+    s_statUploads++;
+    s_statUploadBytes += width * height * 4;
     s_texSizes[s_boundTex[s_curTile]] = std::make_pair(width, height);
     s_texW[s_curTile] = width;
     s_texH[s_curTile] = height;
@@ -1018,6 +1102,8 @@ static void gfx_opengl_set_use_alpha(bool use_alpha, bool modulate) {
 static void gfx_opengl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
     // printf("flushing %d tris\n", buf_vbo_num_tris);
 #if defined(__vita__)
+    s_statDraws++;
+    s_statTris += buf_vbo_num_tris;
     vitaSetTexSizeUniforms();
 #endif
     glBufferData(GL_ARRAY_BUFFER, sizeof(float) * buf_vbo_len, buf_vbo, GL_STREAM_DRAW);

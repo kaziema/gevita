@@ -5219,7 +5219,7 @@ void sub_GAME_7F068508(GUNHAND handnum, f32 floor_y_pos)
     }
  
 #ifdef PORT
-    /* N64 read D_80035EA4/EA8/EAC as one coord3d; don't rely on global layout. */
+    /* Don't read adjacent globals as a coord3d. */
     rot.f[0] = *(f32 *)&D_80035EA4;
     rot.f[1] = *(f32 *)&D_80035EA8;
     rot.f[2] = *(f32 *)&D_80035EAC;
@@ -5543,7 +5543,7 @@ void sub_GAME_7F068508(GUNHAND handnum, f32 floor_y_pos)
     }
  
 #ifdef PORT
-    /* N64 read D_80035EA4/EA8/EAC as one coord3d; don't rely on global layout. */
+    /* Don't read adjacent globals as a coord3d. */
     rot.f[0] = *(f32 *)&D_80035EA4;
     rot.f[1] = *(f32 *)&D_80035EA8;
     rot.f[2] = *(f32 *)&D_80035EAC;

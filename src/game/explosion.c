@@ -1857,6 +1857,23 @@ void explosionScorchTick(struct coord3d *pos, f32 explosion_size, s16 room)
         g_ScorchBuffer[g_NumScorchEntries].vertex_list[3].v.cn[0] = (u8) temp_hi;
         g_ScorchBuffer[g_NumScorchEntries].vertex_list[3].v.cn[3] = sp4B;
 
+#if defined(__vita__)
+        {
+            /* Scorch UV source diagnostics. */
+            extern void sysLogPrintf(int level, const char *fmt, ...);
+            static int nLogged = 0;
+            if (nLogged++ < 3) {
+                Vtx *v = g_ScorchBuffer[g_NumScorchEntries].vertex_list;
+                sysLogPrintf(3, "[scorch] genericimage=%p index=0x%x w=%u h=%u level=%u fmt=%u depth=%u flags=%u/%u "
+                             "tc0=%d,%d tc2=%d,%d tc3=%d,%d rgba0=%u,%u,%u,%u size=%.1f room=%d",
+                             (void *)genericimage, (unsigned)genericimage->index, genericimage->width,
+                             genericimage->height, genericimage->level, genericimage->format, genericimage->depth,
+                             genericimage->flagsS, genericimage->flagsT,
+                             v[0].v.tc[0], v[0].v.tc[1], v[2].v.tc[0], v[2].v.tc[1], v[3].v.tc[0], v[3].v.tc[1],
+                             v[0].v.cn[0], v[0].v.cn[1], v[0].v.cn[2], v[0].v.cn[3], (double)explosion_size, (int)room);
+            }
+        }
+#endif
         g_NumScorchEntries++;
         if (g_NumScorchEntries >= SCORCH_BUFFER_LEN)
         {

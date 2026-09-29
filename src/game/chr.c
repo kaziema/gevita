@@ -885,7 +885,7 @@ struct anim_group_info *ptr_doubles_firing_animation_groups[] = {
 };
 
 #ifdef PORT
-/* group1 has no terminator and runs into groupA on N64; keep them in one array (groupA = &group1[1], chr.h). */
+/* group1 relied on groupA following it; merged (groupA = &group1[1]). */
 struct weapon_firing_animation_table crouched_rifle_firing_animation_group1[] = {
     { PTR_ANIM_fire_kneel_right_leg, 27.0, 0, 0, 0, -1.0, 35.0, 75.0, -1.0, -1.0, 31.0, 75.0, 0.87266463, -0.69813174, 0.90757126, -0.69813174, 1.5, 1.5 },
     { PTR_ANIM_fire_kneel_left_leg, 24.0, 0, 0, 0, -1.0, 46.0, 98.0, -1.0, -1.0, 41.0, 98.0, 0.87266463, -0.52359879, 1.134464, -0.69813174, 1.6, 1.6 },

@@ -42,7 +42,7 @@ _Static_assert(sizeof(struct ModelRoData_DisplayList_CollisionRecord) == 32, "op
 _Static_assert(sizeof(MENU) == 4, "MENU (libultra.c reads it as int)");
 _Static_assert(sizeof(struct fontchar) == 24 && sizeof(struct font) == 2932, "font");
 _Static_assert(__builtin_offsetof(Gfx, dma.addr) == __builtin_offsetof(Gfx, words.w1), "Gfx dma.addr");
-/* Model slots are type-punned as struct Model (model.c); the pun must line up. */
+/* Model slot pun must line up with struct Model. */
 _Static_assert(sizeof(Model) == 0xBC, "Model");
 _Static_assert(sizeof(struct AnimModelSlot) >= sizeof(Model), "AnimModelSlot holds a Model");
 _Static_assert(__builtin_offsetof(struct AnimModelSlot, unk02) == __builtin_offsetof(Model, rwdatalen), "slot rwdatalen");

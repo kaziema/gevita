@@ -247,8 +247,17 @@ void sub_GAME_7F0BD8FC(s32 arg0)
 }
 
 #if defined(__vita__)
-/* One line per stage-load step: a hang or crash names the step it was in. */
-#define LVSTEP(name) osSyncPrintf("[lvl] stage=%d %s\n", (int)g_CurrentStageToLoad, name)
+/* One line per stage-load step, with ms since the previous step. */
+extern unsigned long long sysGetMicroseconds(void);
+static unsigned long long s_lvStepUs;
+static void vitaLvStep(const char *name)
+{
+    unsigned long long now = sysGetMicroseconds();
+    osSyncPrintf("[lvl] stage=%d %s (+%u ms)\n", (int)g_CurrentStageToLoad, name,
+                 s_lvStepUs ? (unsigned)((now - s_lvStepUs) / 1000) : 0);
+    s_lvStepUs = now;
+}
+#define LVSTEP(name) vitaLvStep(name)
 #else
 #define LVSTEP(name) do { } while (0)
 #endif

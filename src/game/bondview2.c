@@ -4981,9 +4981,69 @@ void bondviewApplyVertaTheta(void)
  * EU address 7F081A18.
  * Perfect Dark method bmoveProcessInput.
 */
+#if defined(__vita__)
+#include "system.h"
+s32 lvlGetCurrentStageToLoad(void);
+/* Log the first non-finite player field and restore the last finite snapshot. */
+#define VITA_PLAYER_F32S(X) \
+    X(prop->pos.f[0]) X(prop->pos.f[1]) X(prop->pos.f[2]) \
+    X(vv_theta) X(speedtheta) X(vv_verta) X(speedverta) \
+    X(speedsideways) X(speedstrafe) X(speedforwards) X(speedgo) \
+    X(headpos.f[0]) X(headpos.f[1]) X(headpos.f[2]) X(eyeheight) \
+    X(bondprevpos.f[0]) X(bondprevpos.f[1]) X(bondprevpos.f[2]) \
+    X(standheight) X(bondbreathing) X(ducking_height_offset)
+#define VITA_PF_COUNT(f) + 1
+#define VITA_PF_NUM (0 VITA_PLAYER_F32S(VITA_PF_COUNT))
+void vitaCheckPlayerFinite(const char *where)
+{
+    static f32 good[VITA_PF_NUM];
+    static struct player *goodFor = NULL;
+    static int nLogged = 0;
+    struct player *p = g_CurrentPlayer;
+    f32 cur[VITA_PF_NUM];
+    int n = 0, bad = -1, i;
+    static const char *names[] = {
+#define VITA_PF_NAME(f) #f,
+        VITA_PLAYER_F32S(VITA_PF_NAME)
+#undef VITA_PF_NAME
+    };
+
+    if (p == NULL || p->prop == NULL)
+        return;
+#define VITA_PF_READ(f) cur[n++] = p->f;
+    VITA_PLAYER_F32S(VITA_PF_READ)
+#undef VITA_PF_READ
+    for (i = 0; i < VITA_PF_NUM; i++)
+        if (!__builtin_isfinite(cur[i])) { bad = i; break; }
+
+    if (bad < 0) {
+        for (i = 0; i < VITA_PF_NUM; i++) good[i] = cur[i];
+        goodFor = p;
+        return;
+    }
+    if (nLogged++ < 16) {
+        char line[1024];
+        int len = 0;
+        for (i = 0; i < VITA_PF_NUM && len < (int)sizeof(line) - 48; i++)
+            len += snprintf(line + len, sizeof(line) - len, " %s=%g", names[i], (double)cur[i]);
+        sysLogPrintf(LOG_ERROR, "[nan] player field %s non-finite at %s (stage %d):%s",
+                     names[bad], where, (int)lvlGetCurrentStageToLoad(), line);
+    }
+    if (goodFor == p) {
+        n = 0;
+#define VITA_PF_RESTORE(f) if (!__builtin_isfinite(p->f)) p->f = good[n]; n++;
+        VITA_PLAYER_F32S(VITA_PF_RESTORE)
+#undef VITA_PF_RESTORE
+    }
+}
+#endif
+
 void bondviewProcessInput(s8 stick_x, s8 stick_y, u16 buttons, u16 oldbuttons)
 {
     struct MoveData moveData; // sp120
+#if defined(__vita__)
+    vitaCheckPlayerFinite("input start");
+#endif
 
     s8 player_joyGetStickX; // sp11F
     s8 player_joyGetStickY; // sp11E
@@ -7514,6 +7574,9 @@ void MoveBond(s8 stick_x, s8 stick_y, u16 buttons, u16 oldbuttons)
 
         // perfect dark call: bmove0f0cc654
         bondviewMoveAnimationTick(maxspeed, g_CurrentPlayer->speedforwards, sp3A0);
+#if defined(__vita__)
+        vitaCheckPlayerFinite("after gait anim");
+#endif
 
         headpos_x = g_CurrentPlayer->headpos.f[0];
         headpos_z = g_CurrentPlayer->headpos.f[2];
@@ -8387,6 +8450,30 @@ void bondviewUpdateCameraMatrices(coord3d* cam_pos, coord3d* cam_look_dir, coord
     Mtxf sp60;
     s32 j;
     s32 i;
+
+#if defined(__vita__)
+    {
+        /* Non-finite camera: log and reuse the last finite one. */
+        static coord3d lastPos, lastLook, lastUp = {0.0f, 1.0f, 0.0f};
+        static int haveLast = 0, nBad = 0;
+        f32 *v[3] = { cam_pos->f, cam_look_dir->f, cam_up->f };
+        int ok = 1, k;
+        for (k = 0; k < 9; k++)
+            if (!__builtin_isfinite(v[k / 3][k % 3])) ok = 0;
+        if (ok) {
+            lastPos = *cam_pos; lastLook = *cam_look_dir; lastUp = *cam_up; haveLast = 1;
+        } else {
+            if (nBad++ < 16)
+                sysLogPrintf(LOG_ERROR, "[nan] camera pos=%g,%g,%g look=%g,%g,%g up=%g,%g,%g caller=%p",
+                             (double)cam_pos->x, (double)cam_pos->y, (double)cam_pos->z,
+                             (double)cam_look_dir->x, (double)cam_look_dir->y, (double)cam_look_dir->z,
+                             (double)cam_up->x, (double)cam_up->y, (double)cam_up->z,
+                             __builtin_return_address(0));
+            if (haveLast) { *cam_pos = lastPos; *cam_look_dir = lastLook; *cam_up = lastUp; }
+        }
+    }
+    vitaCheckPlayerFinite("camera");
+#endif
 
     i = bondviewGetCurrentPlayersRoom();
     bondviewUpdateCurrentRoomPosition(i);
