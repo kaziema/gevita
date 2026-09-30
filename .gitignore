@@ -196,3 +196,11 @@ build-pyinst/
 # Local working junk (frame captures, timerun state, PPM dumps) - moved here
 # from repo root / scratch on 2026-09-18; never commit.
 /local/
+build-pc-cmd.bat
+
+# v0.4.0 modern-options wave: per-landing sweep capture dirs (capture.sh output)
+tools_pc/sweep-captures/capture-*/
+
+# Stray full CPython install that landed in repo root (2026-09-28);
+# referenced by no project tooling. Never commit.
+/Python/

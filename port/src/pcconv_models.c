@@ -955,8 +955,9 @@ static int processModel(Ctx *c, const PcConvModel *pm, Sidecar *sc)
             int32_t nv = sBs32(&mc.src, data);
             uint32_t vo = sBe32o(&mc.src, data + 4);
             if (nv && vo) {
-                u32Push(&mc.vtxOff, vo); u32Push(&mc.vtxN, (uint32_t)nv);
-                dstpos = addRegion(regions, vo, 16 * (int64_t)nv, dstpos);
+                /* D303: op-22 count is star-flash arms, 4 vertices each. */
+                u32Push(&mc.vtxOff, vo); u32Push(&mc.vtxN, 4 * (uint32_t)nv);
+                dstpos = addRegion(regions, vo, 16 * 4 * (int64_t)nv, dstpos);
             }
         }
     }
