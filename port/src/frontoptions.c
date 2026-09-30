@@ -107,8 +107,13 @@ extern struct rectbbox folder_option_ERASE_bound;   /* front.c:439 */
  * (it scrolls its own window, D345-D347). */
 #define ROWS_PER_PAGE 11
 
+#if defined(__vita__)
+static const char kLabel[]   = "Vita Options";
+static const char kLabelNL[] = "Vita Options\n";
+#else
 static const char kLabel[]   = "PC Options";  /* ASCII only: issue #87 / D295 */
 static const char kLabelNL[] = "PC Options\n"; /* height measure only, D400 */
+#endif
 
 /* ---- screen state (game thread) ---- */
 static int s_level = 0;          /* 0 = categories, 1 = category, 2/3 = nested pages */
@@ -603,7 +608,7 @@ Gfx *frontOptionsMenuDraw(Gfx *DL)
     DL = microcode_constructor(DL);
 
     if (s_level == 0) {
-        DL = ink(DL, ROW_X, TITLE_Y, "PC Options\n", INK);
+        DL = ink(DL, ROW_X, TITLE_Y, kLabelNL, INK);
         for (int k = 0; k < s_pageN; k++) {
             char name[32], num[8];
             titleCase(optionsRowLabel(s_pageHdr[k]), name, sizeof(name));

@@ -2141,7 +2141,11 @@ Gfx *optionsOverlayEmit(void)
     /* ---- pass 2: text ---- */
     gdl = microcode_constructor(gdl);
 
+#if defined(__vita__)
+    gdl = drawBody(gdl, o.left + 10, o.top + 8, "VITA OPTIONS", 0xa0ffa0ff);
+#else
     gdl = drawBody(gdl, o.left + 10, o.top + 8, "PC OPTIONS", 0xa0ffa0ff);
+#endif
     gdl = drawBodyR(gdl, o.right - 14, o.top + 8, "X", 0xa0ffa0ff);
     if (s_section >= 0) {
         const struct Row *hdr = &rows[s_section];
