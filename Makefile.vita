@@ -150,6 +150,11 @@ COMMON_FLAGS := -g -Wl,-q,--allow-multiple-definition -O2 -fno-strict-aliasing -
 
 CFLAGS   := $(COMMON_FLAGS) -std=gnu11 -fplan9-extensions -fpermissive -Wno-pointer-sign
 CXXFLAGS := $(COMMON_FLAGS) -std=gnu++20 -Wno-unused-function
+CFLAGS   += -fno-math-errno
+CXXFLAGS += -fno-math-errno
+
+# Renderer hot path; no -ffast-math so its NaN guards survive.
+port/fast3d/%.o: CXXFLAGS += -O3 -fno-trapping-math -ffp-contract=fast
 ASFLAGS  := -g $(foreach dir,$(INCLUDES),-I$(dir))
 
 # Header dependencies, kept out of the source tree.

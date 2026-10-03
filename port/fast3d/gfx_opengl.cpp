@@ -94,8 +94,10 @@ static void gfx_opengl_vertex_array_set_attribs(struct ShaderProgram* prg) {
     for (int i = 0; i < prg->num_attribs; i++) {
         if (prg->attrib_locations[i] >= 0) {
             glEnableVertexAttribArray(prg->attrib_locations[i]);
+#if !defined(__vita__) /* Vita: client-array pointers are set per draw */
             glVertexAttribPointer(prg->attrib_locations[i], prg->attrib_sizes[i], GL_FLOAT, GL_FALSE,
                                 num_floats * sizeof(float), (void*)(pos * sizeof(float)));
+#endif
         }
         pos += prg->attrib_sizes[i];
     }
@@ -1105,8 +1107,20 @@ static void gfx_opengl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_
     s_statDraws++;
     s_statTris += buf_vbo_num_tris;
     vitaSetTexSizeUniforms();
-#endif
+    /* Client arrays: vitaGL copies into its per-frame pool instead of allocating a buffer per draw. */
+    if (s_curPrg) {
+        size_t pos = 0;
+        GLsizei stride = s_curPrg->num_floats * sizeof(float);
+        for (int i = 0; i < s_curPrg->num_attribs; i++) {
+            if (s_curPrg->attrib_locations[i] >= 0)
+                glVertexAttribPointer(s_curPrg->attrib_locations[i], s_curPrg->attrib_sizes[i], GL_FLOAT, GL_FALSE,
+                                      stride, buf_vbo + pos);
+            pos += s_curPrg->attrib_sizes[i];
+        }
+    }
+#else
     glBufferData(GL_ARRAY_BUFFER, sizeof(float) * buf_vbo_len, buf_vbo, GL_STREAM_DRAW);
+#endif
     glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
 }
 
@@ -1342,8 +1356,10 @@ static void gfx_opengl_init(void) {
 #endif
     sysLogPrintf(LOG_NOTE, "GL: using GLSL version %s", gl_glsl_version_str);
 
+#if !defined(__vita__) /* Vita draws from client arrays (see draw_triangles) */
     glGenBuffers(1, &opengl_vbo);
     glBindBuffer(GL_ARRAY_BUFFER, opengl_vbo);
+#endif
 
     if (gl_core_profile || gl_es) {
         // warn user that funny things can happen

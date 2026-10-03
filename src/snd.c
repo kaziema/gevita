@@ -720,8 +720,23 @@ void sndHandleEvent(ALSndPlayer *sndp, ALSndpEvent *event) {
 /**
  * 9548    70008948
  */
+#ifdef PORT
+/* A walk ran past every possible sound state: the active list has a cycle. Log once per site. */
+static void sndPortListLoop(const char *where)
+{
+    extern void sysLogPrintf(int level, const char *fmt, ...);
+    static int nLogged = 0;
+    if (nLogged++ < 8)
+        sysLogPrintf(0, "[snd] active sound list loops (in %s); walk cut short", where);
+}
+#endif
+
 void sndDisposeSound(ALSoundState *state)
 {
+#ifdef PORT
+    /* Audio thread edits the sound lists the game thread edits under this lock; on multicore it must lock too. */
+    OSIntMask mask = osSetIntMask(OS_IM_NONE);
+#endif
     if (state->unk3e & 4)
     {
         alSynStopVoice(g_sndPlayerPtr->drvr, &state->voice);
@@ -730,6 +745,9 @@ void sndDisposeSound(ALSoundState *state)
 
     sndUnlinkClearSound(state);
     sndRemoveEvents(&g_sndPlayerPtr->evtq, state, 0xffff);
+#ifdef PORT
+    osSetIntMask(mask);
+#endif
 }
 
 /**
@@ -1333,8 +1351,14 @@ void sndDeactivateAllSfxByFlag(u8 flag)
     mask = osSetIntMask(OS_IM_NONE);
 
     item = (ALSoundState *)D_800243E4.node.next;
+#ifdef PORT
+    s32 walkCap = 0;
+#endif
     while (item != NULL)
     {
+#ifdef PORT
+        if (++walkCap > 512) { sndPortListLoop("sndDeactivateAllSfxByFlag"); break; }
+#endif
         evt.common.type = AL_SNDP_DEACTIVATE_EVT;
         evt.common.state = item;
 
@@ -1497,8 +1521,14 @@ void sndSetSfxSlotVolume(u8 sfxIndex, u16 volume)
     g_sndSfxSlotNaturalVolume[sfxIndex] = volume;
     g_sndSfxSlotVolume[sfxIndex] = (s16) ((f32) volume * g_sndSfxVolumeScale);
 
+#ifdef PORT
+    s32 walkCap = 0;
+#endif
     while (item != NULL)
     {
+#ifdef PORT
+        if (++walkCap > 512) { sndPortListLoop("sndSetSfxSlotVolume"); break; }
+#endif
         if (item->sound != NULL)
         {
             if ((item->sound->keyMap->keyMin & 0x3f) == sfxIndex)

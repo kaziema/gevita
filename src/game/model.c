@@ -2932,7 +2932,7 @@ void modelSetAnimation(Model *model, ModelAnimation *modelAnimation, s32 flip, f
             if (!__builtin_isfinite(startframe)) startframe = 0.0f;
             if (!__builtin_isfinite(merge)) merge = 0.0f;
         }
-        if (a < base || a + sizeof(ModelAnimation) > base + g_vitaAnimTableSize) {
+        if (a < base || a >= base + g_vitaAnimTableSize) {
             if (nBad++ < 32)
                 sysLogPrintf(LOG_ERROR, "[anim] bad anim %p (table %p+0x%x) model=%p caller=%p",
                              (void *)modelAnimation, (void *)base, g_vitaAnimTableSize,

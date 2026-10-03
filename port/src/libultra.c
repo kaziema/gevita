@@ -214,6 +214,10 @@ static OSMesg g_viRetraceMsg = 0;
 static uint64_t g_nextTickUs = 0;
 static uint32_t g_tickIntervalUs = 1000000 / 60; /* NTSC frame rate */
 
+#if defined(__vita__)
+static uint64_t g_vitaMainWaitUs;   /* game thread time blocked on message queues */
+#endif
+
 static PortThread *portFind(OSThread *t)
 {
     for (int i = 0; i < PORT_MAX_THREADS; ++i) {
@@ -682,6 +686,9 @@ s32 osSendMesg(OSMesgQueue *mq, OSMesg msg, s32 flag)
         if (self) { self->waitMq = mq; self->waitFrom = __builtin_return_address(0); self->waitSinceUs = sysGetMicroseconds(); }
         pthread_cond_wait(&pq->cond, &pq->lock);
         if (self) self->waitMq = NULL;
+#if defined(__vita__)
+        if (self && self->id == 3) g_vitaMainWaitUs += sysGetMicroseconds() - self->waitSinceUs;
+#endif
     }
     mq->msg[(mq->first + mq->validCount) % mq->msgCount] = msg;
     ++mq->validCount;
@@ -764,6 +771,9 @@ s32 osRecvMesg(OSMesgQueue *mq, OSMesg *msg, s32 flag)
         if (self) { self->waitMq = mq; self->waitFrom = __builtin_return_address(0); self->waitSinceUs = sysGetMicroseconds(); }
         pthread_cond_wait(&pq->cond, &pq->lock);
         if (self) self->waitMq = NULL;
+#if defined(__vita__)
+        if (self && self->id == 3) g_vitaMainWaitUs += sysGetMicroseconds() - self->waitSinceUs;
+#endif
     }
     OSMesg m = mq->msg[mq->first];
     mq->first = (mq->first + 1) % mq->msgCount;
@@ -1543,6 +1553,7 @@ void osSpTaskStartGo(OSTask *t)
             extern void vitaGfxStatsTake(unsigned *, unsigned *, unsigned *, unsigned *, unsigned *);
             static uint64_t lastEnd, sGap, sRun, sSwap, mGap, mRun, mSwap;
             static unsigned n, sDraws, sTris, sUp, sUpKB, sSw, mDraws, mUpKB;
+            static uint64_t sDrawUs, sTexUs, sVtxUs, winStartUs;
             uint64_t gap = lastEnd ? t0 - lastEnd : 0, run = tRun - t0, swap = g_lastFrameUs - tRun;
             unsigned d, tr, up, upKB, sw;
             vitaGfxStatsTake(&d, &tr, &up, &upKB, &sw);
@@ -1554,10 +1565,23 @@ void osSpTaskStartGo(OSTask *t)
             sDraws += d; sTris += tr; sUp += up; sUpKB += upKB; sSw += sw;
             if (d > mDraws) mDraws = d;
             if (upKB > mUpKB) mUpKB = upKB;
+            {
+                extern void vitaFast3dTimesTake(unsigned *, unsigned *, unsigned *);
+                unsigned du, tu, vu;
+                vitaFast3dTimesTake(&du, &tu, &vu);
+                sDrawUs += du; sTexUs += tu; sVtxUs += vu;
+            }
+            if (!winStartUs) winStartUs = t0;
             if (++n == 300) {
+                uint64_t wall = g_lastFrameUs - winStartUs, wait = g_vitaMainWaitUs;
                 sysLogPrintf(LOG_NOTE, "[perf] avg/max ms: game %.1f/%.1f dl %.1f/%.1f swap %.1f/%.1f | per frame: draws %u (max %u) tris %u shader sw %u tex uploads %u (%u KB, max %u KB)",
                              sGap / 300000.0, mGap / 1000.0, sRun / 300000.0, mRun / 1000.0, sSwap / 300000.0, mSwap / 1000.0,
                              sDraws / 300, mDraws, sTris / 300, sSw / 300, sUp / 300, sUpKB / 300, mUpKB);
+                sysLogPrintf(LOG_NOTE, "[perf] dl split ms/frame: draw submit %.2f tex import %.2f vertex %.2f other %.2f | game thread busy %.1f ms/frame (%.0f%%)",
+                             sDrawUs / 300000.0, sTexUs / 300000.0, sVtxUs / 300000.0,
+                             (sRun > sDrawUs + sTexUs + sVtxUs ? sRun - sDrawUs - sTexUs - sVtxUs : 0) / 300000.0,
+                             wall > wait ? (wall - wait) / 300000.0 : 0.0, wall ? 100.0 * (wall > wait ? wall - wait : 0) / wall : 0.0);
+                g_vitaMainWaitUs = 0; winStartUs = 0; sDrawUs = sTexUs = sVtxUs = 0;
                 n = 0; sGap = sRun = sSwap = mGap = mRun = mSwap = 0;
                 sDraws = sTris = sUp = sUpKB = sSw = mDraws = mUpKB = 0;
             }

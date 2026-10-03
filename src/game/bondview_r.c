@@ -344,6 +344,18 @@ void bondviewLoadSetupIntroSection(void)
                     // hack: bad address math
                     credits = (CreditsEntry*)((s32)g_ptrStageSetupFile + (s32)intro_credits->unk04);
                     credits_pointer = credits;
+#ifdef PORT
+                    {
+                        /* The converter copies this table raw: swap its big-endian u16 fields (fresh copy each load). */
+                        u16 *h = (u16 *)credits;
+                        while (h[0] != 0 || h[1] != 0) {
+                            s32 k;
+                            for (k = 0; k < (s32)(sizeof(CreditsEntry) / sizeof(u16)); k++)
+                                h[k] = (u16)((h[k] >> 8) | (h[k] << 8));
+                            h += sizeof(CreditsEntry) / sizeof(u16);
+                        }
+                    }
+#endif
 
                     // what is the point of this?
                     while (credits->TextId1 != 0 || credits->TextId2 != 0)

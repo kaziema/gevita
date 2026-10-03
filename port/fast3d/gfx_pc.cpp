@@ -289,9 +289,26 @@ static constexpr float clampf(const float x, const float min, const float max) {
     return (x < min) ? min : (x > max) ? max : x;
 }
 
+#if defined(__vita__)
+#include <psp2/kernel/processmgr.h>
+/* Per-frame split of display-list time, drained by the [perf] log in libultra.c. */
+static uint64_t s_tDraw, s_tTex, s_tVtx;
+extern "C" void vitaFast3dTimesTake(unsigned* drawUs, unsigned* texUs, unsigned* vtxUs) {
+    *drawUs = (unsigned)s_tDraw; *texUs = (unsigned)s_tTex; *vtxUs = (unsigned)s_tVtx;
+    s_tDraw = s_tTex = s_tVtx = 0;
+}
+#define VT_BEGIN() const uint64_t vt0 = sceKernelGetProcessTimeWide()
+#define VT_END(acc) (acc) += sceKernelGetProcessTimeWide() - vt0
+#else
+#define VT_BEGIN() do { } while (0)
+#define VT_END(acc) do { } while (0)
+#endif
+
 static void gfx_flush(void) {
     if (buf_vbo_len > 0) {
+        VT_BEGIN();
         gfx_rapi->draw_triangles(buf_vbo, buf_vbo_len, buf_vbo_num_tris);
+        VT_END(s_tDraw);
         buf_vbo_len = 0;
         buf_vbo_num_tris = 0;
     }
@@ -2105,7 +2122,11 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx, bo
         if (comb->used_textures[i]) {
             if (rdp.textures_changed[i]) {
                 gfx_flush();
-                import_texture(i, tile, false);
+                {
+                    VT_BEGIN();
+                    import_texture(i, tile, false);
+                    VT_END(s_tTex);
+                }
                 rdp.textures_changed[i] = false;
             }
 
@@ -2863,6 +2884,9 @@ static void gfx_dp_set_tile(uint8_t fmt, uint32_t siz, uint32_t line, uint32_t t
 }
 
 static void gfx_dp_set_tile_size(uint8_t tile, uint16_t uls, uint16_t ult, uint16_t lrs, uint16_t lrt) {
+    /* panned tiles wrap the far corner below the near one in the 12-bit field */
+    if (lrs < uls) lrs += 0x1000;
+    if (lrt < ult) lrt += 0x1000;
     rdp.texture_tile[tile].uls = uls;
     rdp.texture_tile[tile].ult = ult;
     rdp.texture_tile[tile].lrs = lrs;
@@ -3550,7 +3574,11 @@ static void gfx_run_dl(Gfx* cmd) {
                 gfx_sp_texture(C1(16, 16), C1(0, 16), C0(11, 3), C0(8, 3), C0(0, 8));
                 break;
             case G_VTX:
-                gfx_sp_vertex(C0(0, 16) / sizeof(Vtx), C0(16, 4), (const Vtx*)seg_addr(cmd->words.w1));
+                {
+                    VT_BEGIN();
+                    gfx_sp_vertex(C0(0, 16) / sizeof(Vtx), C0(16, 4), (const Vtx*)seg_addr(cmd->words.w1));
+                    VT_END(s_tVtx);
+                }
                 break;
             case G_DL: {
                 if (C0(16, 1) == 0) {
