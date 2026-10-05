@@ -47,6 +47,17 @@ struct Explosion *g_ExplosionBuffer;
 
 //CODE.bss:8007A148
 s32 max_particles;
+
+#if defined(__vita__)
+/* Vita: fewer flame billboards, smoke puffs and live smoke clouds (CPU-bound per particle). */
+#define VITA_EXPLOSION_PARTS 24
+#define VITA_SMOKE_PARTS 6
+#define VITA_SMOKE_CLOUDS 10
+#else
+#define VITA_EXPLOSION_PARTS EXPLOSION_PARTS_LEN
+#define VITA_SMOKE_PARTS SMOKE_PARTS_LEN
+#define VITA_SMOKE_CLOUDS 20
+#endif
 //CODE.bss:8007A14C
 // printf("Allocating %d bytes for debris data (%d bits)\n", DAT_83bd2af0 * 0xa4, DAT_83bd2af0);
 struct FlyingParticles *g_FlyingParticlesBuffer;
@@ -723,7 +734,7 @@ s32 explosionTick(PropRecord* arg0)
         sp9C = (s32) (((f32)explosiontype->propagationrate * (f32)exp->age) / (f32)explosiontype->duration) + 1;
         for (var_s4 = 0; var_s4 < sp9C; var_s4++)
         {
-            for (j=0; j<EXPLOSION_PARTS_LEN; j++)
+            for (j=0; j<VITA_EXPLOSION_PARTS; j++)
             {
                 if (exp->parts[j].frame == 0)
                 {
@@ -891,6 +902,16 @@ Gfx *explosionRenderPropExplosion(PropRecord *prop, Gfx *gdl, s32 withalpha)
             var_s2 >= 0;
             var_s2--)
         {
+#if defined(__vita__)
+            {
+                /* Skip frames no part is on: each frame's DL is a texture load that splits the draw. */
+                s32 used = 0;
+                for (i = 0; i < EXPLOSION_PARTS_LEN && !used; i++)
+                    used = temp_s5->parts[i].frame > 0
+                        && var_s2 == (s32)((f32)(temp_s5->parts[i].frame - 1) / g_ExplosionTypes[temp_s5->explosion_type].flareanimspeed);
+                if (!used) continue;
+            }
+#endif
             gSPDisplayList(gdl++, g_ExplosionDisplayLists[var_s2]);
 
             for (i = 0; i < EXPLOSION_PARTS_LEN; i++)
@@ -1230,7 +1251,7 @@ void explosionCreateSmoke(coord3d *pos, StandTile *stan, s16 smoke_type, u8 *roo
     smoke = NULL;
     player_count = getPlayerCount();
 
-    for (i = 0; i < 20; i++)
+    for (i = 0; i < VITA_SMOKE_CLOUDS; i++)
     {
         if (g_SmokeBuffer[i].prop == NULL)
         {
@@ -1338,7 +1359,7 @@ s32 explosionSmokeTick(PropRecord *arg0)
         {
             if (smoke->duration % g_SmokeTypes[smoke->smoke_type].ratedissolve == 1)
             {
-        		for (j = 0; j < SMOKE_PARTS_LEN; j++)
+        		for (j = 0; j < VITA_SMOKE_PARTS; j++)
                 {
                     if (smoke->parts[j].size == 0.0f)
                     {

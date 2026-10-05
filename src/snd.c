@@ -188,8 +188,24 @@ void sndNewPlayerInit(ALSeqpSfxConfig *sfxSeqpConfig)
     /*
      * init the event queue
      */
+#if defined(__vita__)
+    {
+        /* 64 events overflow in bursts (tank crushing a group) and silently drop sound commands; size 4x off the music heap. */
+        extern void *calloc(unsigned int, unsigned int);
+        static ALEventListItem *s_evtItems = NULL;
+        if (s_evtItems == NULL)
+            s_evtItems = (ALEventListItem *)calloc(sfxSeqpConfig->maxEvents * 4, sizeof(ALEventListItem));
+        if (s_evtItems != NULL) {
+            alEvtqNew(&g_sndPlayerPtr->evtq, s_evtItems, sfxSeqpConfig->maxEvents * 4);
+        } else {
+            ptr = alHeapAlloc(sfxSeqpConfig->heap, 1, sfxSeqpConfig->maxEvents * sizeof(ALEventListItem));
+            alEvtqNew(&g_sndPlayerPtr->evtq, (ALEventListItem *)ptr, sfxSeqpConfig->maxEvents);
+        }
+    }
+#else
     ptr = alHeapAlloc(sfxSeqpConfig->heap, 1, sfxSeqpConfig->maxEvents * sizeof(ALEventListItem));
     alEvtqNew(&g_sndPlayerPtr->evtq, (ALEventListItem *)ptr, sfxSeqpConfig->maxEvents);
+#endif
 
     D_800243E4.g_sndPlayerSoundStatePtr = g_sndPlayerPtr->sndState;
 
@@ -431,6 +447,14 @@ void sndHandleEvent(ALSndPlayer *sndp, ALSndpEvent *event) {
                             }
                             osSetIntMask(d285Mask);
 
+#if defined(__vita__)
+                            {
+                                static int nPre = 0;
+                                if (nPre++ < 16)
+                                    osSyncPrintf("[snd] sfx voices full (%d/%d): %s\n", g_sndAllocatedVoicesCount,
+                                                 sndp->maxSounds, limitReached ? "new sound dropped" : "older sound cut");
+                            }
+#endif
                             if (!limitReached) {
                                 // Retry the sound that was preempted.
                                 soundState->unk38 = 2;

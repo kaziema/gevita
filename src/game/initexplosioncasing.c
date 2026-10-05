@@ -66,6 +66,9 @@ void alloc_explosion_smoke_casing_scorch_impact_buffers(void)
     }
 
     max_particles = MAX_FLYING_PARTICLES / getPlayerCount();
+#if defined(__vita__)
+    max_particles /= 2;   /* half the wall-hit debris on Vita */
+#endif
 
     if ((lvlGetCurrentStageToLoad() == LEVELID_STREETS) || (lvlGetCurrentStageToLoad() == LEVELID_DEPOT))
     {

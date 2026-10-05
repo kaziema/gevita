@@ -126,7 +126,7 @@ static int rcRunConverter(const char *exePath, const char *rom, const char *out)
 }
 #elif defined(__vita__)
 /* Bump when the converter output format changes; stale sidecars are rebuilt. */
-#define RC_VITA_STAMP "4\n"
+#define RC_VITA_STAMP "5\n"
 
 static int rcVitaStampOk(void)
 {

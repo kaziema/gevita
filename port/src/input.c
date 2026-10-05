@@ -939,6 +939,12 @@ static const char *const kGepdPreset[IA_COUNT] = {
     [IA_CROUCH] = "Left Ctrl",
 };
 static int s_crouchLatch = 0;
+static int s_vitaStanceCrouch = 0;   /* Vita D-pad stance: 1 = crouched until D-pad up */
+#if defined(__vita__)
+#define VITA_STANCE 1
+#else
+#define VITA_STANCE 0
+#endif
 static int s_crouchHeldPrev = 0;
 static int s_crouchApplied = 0; /* port-owned stance; not the native C-down crouch */
 static struct player *s_crouchPlayer = NULL;
@@ -1896,6 +1902,8 @@ unsigned inputComputePad(int idx, signed char *stick_x, signed char *stick_y)
 
     /* ---- gamepad ---- */
     SDL_GameController *pad = pads[idx];
+    int vitaDpadIsStance = 0;
+    (void)vitaDpadIsStance;
     if (pad) {
         int lx = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX);
         int ly = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY);
@@ -1994,24 +2002,31 @@ unsigned inputComputePad(int idx, signed char *stick_x, signed char *stick_y)
                    | ((t & GE_CONT_R) ? GE_CONT_G : 0);
         }
 #if defined(__vita__)
-        /* No analog triggers on Vita: R fires, L aims, Triangle/Square cycle weapons. */
+        /* Vita: R fire, L aim. In play Cross = use and Square = reload (dedicated paths above),
+         * Triangle/Circle = next/prev weapon, D-pad down/up = crouch/stand. Menus: Cross/Circle = accept/back. */
         if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER))
             button |= GE_CONT_G;
         if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_LEFTSHOULDER))
             button |= GE_CONT_R;
-        if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_A))
-            button |= GE_CONT_A;
-        if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_B))
-            button |= GE_CONT_B;
         {
+            int facePlayable = idx == 0 && inputCanUseGameplayActions(padMenuMode);
+            int crossNow = SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_A);
+            int circleNow = SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_B);
             int triNow = SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_Y);
-            int sqNow  = SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_X);
             int *prev = &padShoulderPrev[idx];
-            if (!padMenuMode) {
-                if (triNow && !(*prev & 1)) button |= GE_CONT_A;            /* next weapon */
-                if (sqNow && !(*prev & 2))  button |= GE_CONT_A | GE_CONT_G; /* prev weapon */
+            if (facePlayable) {
+                if (triNow && !(*prev & 1))    button |= GE_CONT_A;              /* next weapon */
+                if (circleNow && !(*prev & 2)) button |= GE_CONT_A | GE_CONT_G;  /* prev weapon */
+            } else if (g_PlayerIsInTank != 1 && g_BondCanEnterTank == 0) {
+                if (crossNow)  button |= GE_CONT_A;
+                if (circleNow) button |= GE_CONT_B;
             }
-            *prev = (triNow ? 1 : 0) | (sqNow ? 2 : 0);
+            *prev = (triNow ? 1 : 0) | (circleNow ? 2 : 0);
+            if (facePlayable) {
+                if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_DOWN)) s_vitaStanceCrouch = 1;
+                if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_UP))   s_vitaStanceCrouch = 0;
+                vitaDpadIsStance = 1;
+            }
         }
 #else
 
@@ -2041,6 +2056,9 @@ unsigned inputComputePad(int idx, signed char *stick_x, signed char *stick_y)
 #endif
         if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_START))
             button |= GE_CONT_START;
+#if defined(__vita__)
+        if (!vitaDpadIsStance) {
+#endif
         if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_UP))
             button |= GE_CONT_UP;
         if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_DOWN))
@@ -2049,6 +2067,9 @@ unsigned inputComputePad(int idx, signed char *stick_x, signed char *stick_y)
             button |= GE_CONT_LEFT;
         if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_RIGHT))
             button |= GE_CONT_RIGHT;
+#if defined(__vita__)
+        }
+#endif
 
         /* Select (BACK) opens the F10 options overlay -- the gamepad
          * equivalent of the F10 key for controller-only machines (Steam
@@ -2062,6 +2083,9 @@ unsigned inputComputePad(int idx, signed char *stick_x, signed char *stick_y)
     }
 
     if (idx == 0 && scriptIsActive()) crouchNow = s_scriptCrouch;
+#if defined(__vita__)
+    if (idx == 0 && !scriptIsActive()) crouchNow = s_vitaStanceCrouch;
+#endif
 
     /* The GEPD preset's crouch key is independent of aim. Do not turn it
      * into C-down: outside aim C-down moves backwards in 1.2, and inside
@@ -2071,7 +2095,8 @@ unsigned inputComputePad(int idx, signed char *stick_x, signed char *stick_y)
     if (idx == 0) {
         int stage = current_menu == GE_MENU_RUN_STAGE || current_menu == GE_MENU_INVALID;
         if (!stage) s_crouchLatch = 0;
-        if (crouchMode == 1) {
+        if (!stage) s_vitaStanceCrouch = 0;
+        if (crouchMode == 1 && !VITA_STANCE) {
             if (stage && crouchNow && !s_crouchHeldPrev) s_crouchLatch ^= 1;
             s_crouchHeldPrev = crouchNow;
             crouchNow = s_crouchLatch;

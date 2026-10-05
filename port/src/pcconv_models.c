@@ -1169,6 +1169,18 @@ static int processModel(Ctx *c, const PcConvModel *pm, Sidecar *sc)
             o += 8;
         }
     }
+    /* D75/M-197: embedded image blobs are raw RDP pixels; copy them as-is (else they stay zeroed). */
+    for (size_t k = 0; k < mergedS.n; k++) {
+        uint32_t o = mergedS.p[k], n = mergedE.p[k] - mergedS.p[k];
+        int ok;
+        int64_t np = eRemap(&e, o, &ok);
+        if (!ok) {
+            cvErr(c, pm->name, "image blob not in region map", o, 0);
+            continue;
+        }
+        if (eChk(&e, (uint32_t)np, n) && sOk(src, o, n))
+            memcpy(buf + np, src->p + o, n);
+    }
     if (src->oob) { cvErr(c, pm->name, "emit: read past end of file", 2, 0); goto done; }
     if (c->nerr > nerr0)
         goto done;

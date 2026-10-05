@@ -2602,6 +2602,16 @@ void texLoad(s32 *updateword, struct texpool *pool)
                     osSyncPrintf("D85TEX texLoad pool-full texnum=%d iszlib=%d free=%d\n",
                                  (int)g_TexNumToLoad, (int)iszlib, (int)texFreeBytesInBuffer(pool));
 #endif
+#if defined(__vita__)
+                {
+                    static int nFull = 0;
+                    if (nFull++ < 32)
+                        osSyncPrintf("[tex] pool full: texnum=%d pool=%s free=%d -> drawn with pool start (N64 fallback)\n",
+                                     (int)g_TexNumToLoad,
+                                     pool == (struct texpool *)&ptr_texture_alloc_start ? "main" : "model",
+                                     (int)texFreeBytesInBuffer(pool));
+                }
+#endif
                 *updateword = osVirtualToPhysical(pool->start);
                 return;
             }
@@ -2624,6 +2634,13 @@ void texLoad(s32 *updateword, struct texpool *pool)
                 bytesout = texInflateNonZlib(compptr, pool->leftpos, sp14a8, lod, pool);
             }
 
+#ifdef PORT
+            {
+                /* New texture bytes at a possibly recycled address: drop any cached GL texture there. */
+                extern void gfx_texture_cache_invalidate_async(const void *start, const void *end);
+                gfx_texture_cache_invalidate_async(pool->leftpos, pool->leftpos + bytesout);
+            }
+#endif
             pool->leftpos += bytesout;
         }
 

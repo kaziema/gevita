@@ -106,6 +106,13 @@ void alEvtqPostEvent(ALEventQueue *evtq, ALEvent *evt, ALMicroTime delta)
                     (void *)((u8 *)evt + 2), (int)delta);
         }
 #endif
+#if defined(__vita__)
+        {
+            static int nDrop = 0;
+            if (nDrop++ < 16)
+                osSyncPrintf("[snd] event queue full, dropped event type=%d (drop #%d)\n", (int)evt->type, nDrop);
+        }
+#endif
         osSetIntMask(mask);
 #ifdef _DEBUG
         __osError(ERR_ALEVENTNOFREE, 0);

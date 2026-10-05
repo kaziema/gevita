@@ -18,6 +18,7 @@
 #include <iostream>
 #include <memory>
 #include <limits>
+#include <SDL_atomic.h>
 
 #ifndef _LANGUAGE_C
 #define _LANGUAGE_C
@@ -650,6 +651,24 @@ void gfx_texture_cache_delete(const uint8_t* orig_addr) {
     }
 }
 
+/* Texture data rewritten by the game thread: queue the byte range, drop matching cache entries before the next frame. */
+static SDL_SpinLock s_texInvalLock;
+static const uint8_t* s_texInval[64][2];
+static int s_texInvalN;
+static bool s_texInvalAll;
+extern "C" void gfx_texture_cache_invalidate_async(const void* start, const void* end) {
+    SDL_AtomicLock(&s_texInvalLock);
+    if (s_texInvalN < 64) {
+        s_texInval[s_texInvalN][0] = (const uint8_t*)start;
+        s_texInval[s_texInvalN][1] = (const uint8_t*)end;
+        s_texInvalN++;
+    } else {
+        s_texInvalAll = true;
+    }
+    SDL_AtomicUnlock(&s_texInvalLock);
+}
+static void gfx_texture_cache_drain_invalidations(void);
+
 void gfx_texture_cache_delete_range(const uint8_t* start, const uint8_t* end) {
     gfx_flush();
 
@@ -671,6 +690,22 @@ void gfx_texture_cache_delete_range(const uint8_t* start, const uint8_t* end) {
             ++it;
         }
     }
+}
+
+static void gfx_texture_cache_drain_invalidations(void) {
+    const uint8_t* q[64][2];
+    int n;
+    bool all;
+    SDL_AtomicLock(&s_texInvalLock);
+    n = s_texInvalN; all = s_texInvalAll;
+    memcpy(q, s_texInval, sizeof(q[0]) * n);
+    s_texInvalN = 0; s_texInvalAll = false;
+    SDL_AtomicUnlock(&s_texInvalLock);
+    if (all) {
+        gfx_texture_cache_clear();
+        return;
+    }
+    for (int i = 0; i < n; i++) gfx_texture_cache_delete_range(q[i][0], q[i][1]);
 }
 
 // D71 (docs/internals.md): texture sources arrive in two byte conventions.
@@ -2101,6 +2136,26 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx, bo
     key.options = cc_options;
 
     ColorCombiner* comb = gfx_lookup_or_create_color_combiner(key);
+#if defined(__vita__)
+    if (rsp.geometry_mode & G_TEXTURE_GEN) {
+        /* Env-mapped material diagnostics (glass, chrome): one line per distinct combine. */
+        static uint64_t seen[24];
+        static int nseen = 0;
+        int known = 0;
+        for (int k = 0; k < nseen; k++) known |= (seen[k] == rdp.combine_mode);
+        if (!known && nseen < 24) {
+            const uint32_t fi = rdp.first_tile_index;
+            seen[nseen++] = rdp.combine_mode;
+            sysLogPrintf(LOG_INFO, "[envmap] cc=%llx 2cyc=%d lod=%d detail=%d lookat=%d tex=%d/%d first=%u "
+                         "t0[tmem=%u fmt=%u siz=%u] t1[tmem=%u fmt=%u siz=%u] -> unit0 tile+%d unit1 tile+%d",
+                         (unsigned long long)rdp.combine_mode, (int)use_2cyc, (int)rdp.tex_lod, (int)rdp.tex_detail,
+                         (int)rsp.lookat_enabled, (int)comb->used_textures[0], (int)comb->used_textures[1], fi,
+                         rdp.texture_tile[fi].tmem, rdp.texture_tile[fi].fmt, rdp.texture_tile[fi].siz,
+                         rdp.texture_tile[(fi + 1) & 7].tmem, rdp.texture_tile[(fi + 1) & 7].fmt,
+                         rdp.texture_tile[(fi + 1) & 7].siz, gfx_lod_tile_offset(0), gfx_lod_tile_offset(1));
+        }
+    }
+#endif
 
     uint32_t tm = 0;
     uint32_t tex_width[2], tex_height[2], tex_width2[2], tex_height2[2];
@@ -4005,6 +4060,7 @@ extern "C" Gfx* optionsOverlayEmit(void);
 extern "C" void gfx_run(Gfx* commands) {
     s_hud_scale = 1.0f;   /* D226: never carry a HUD scale across frames */
     ++num_dls;
+    gfx_texture_cache_drain_invalidations();
     gfx_sp_reset();
 
     // puts("New frame");
