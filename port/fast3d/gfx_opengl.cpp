@@ -128,7 +128,7 @@ extern "C" void vitaGfxStatsTake(unsigned* draws, unsigned* tris, unsigned* uplo
 /* Compiled-program cache in ux0:data: each shader compiles once, ever. */
 #define VITA_SHADER_CACHE_DIR "ux0:data/GoldenEye007/shadercache"
 static uint64_t vitaShaderKey(const char* vs, const char* fs) {
-    uint64_t h = 1469598103934665603ULL;
+    uint64_t h = 1469598103934665603ULL ^ 0x2;   /* bump when compiler settings change */
     for (const char* s = vs; *s; s++) h = (h ^ (uint8_t)*s) * 1099511628211ULL;
     h = (h ^ 0xff) * 1099511628211ULL;
     for (const char* s = fs; *s; s++) h = (h ^ (uint8_t)*s) * 1099511628211ULL;

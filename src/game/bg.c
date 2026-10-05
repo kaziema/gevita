@@ -2395,6 +2395,50 @@ static void bgSwapRoomVtx(Vtx *vtx, s32 byteSize)
 #endif
 
 
+#if defined(__vita__)
+/* Room bounding spheres (room-local units) for fog culling: rooms wholly past the far fog draw as pure fog. */
+static f32 s_vitaRoomSphere[MAXROOMCOUNT][4];
+static u8 s_vitaRoomSphereOk[MAXROOMCOUNT];
+s32 g_vitaRoomsFogCulled;
+
+static void bgVitaRoomBoundsCompute(s32 room, Vtx *v, s32 n)
+{
+    f32 mn[3] = { 1e30f, 1e30f, 1e30f }, mx[3] = { -1e30f, -1e30f, -1e30f };
+    s32 i, k;
+    if (room < 0 || room >= MAXROOMCOUNT) return;
+    s_vitaRoomSphereOk[room] = 0;
+    if (n <= 0) return;
+    for (i = 0; i < n; i++) {
+        for (k = 0; k < 3; k++) {
+            f32 c = (f32)v[i].v.ob[k];
+            if (c < mn[k]) mn[k] = c;
+            if (c > mx[k]) mx[k] = c;
+        }
+    }
+    for (k = 0; k < 3; k++) s_vitaRoomSphere[room][k] = (mn[k] + mx[k]) * 0.5f;
+    s_vitaRoomSphere[room][3] = sqrtf((mx[0] - mn[0]) * (mx[0] - mn[0]) + (mx[1] - mn[1]) * (mx[1] - mn[1]) +
+                                      (mx[2] - mn[2]) * (mx[2] - mn[2])) * 0.5f;
+    s_vitaRoomSphereOk[room] = 1;
+}
+
+/* Same test the game uses for props, applied to the room's world-space sphere. */
+static s32 bgVitaRoomBeyondFog(s32 room)
+{
+    coord3d c;
+    coord3d *rp;
+    f32 sc;
+    if (room < 0 || room >= MAXROOMCOUNT || !s_vitaRoomSphereOk[room]) return 0;
+    rp = getRoomPositionByIndex(room);
+    sc = get_room_data_float2();
+    c.f[0] = (s_vitaRoomSphere[room][0] + rp->f[0]) * sc;
+    c.f[1] = (s_vitaRoomSphere[room][1] + rp->f[1]) * sc;
+    c.f[2] = (s_vitaRoomSphere[room][2] + rp->f[2]) * sc;
+    if (fogPositionIsVisibleThroughFog(&c, s_vitaRoomSphere[room][3] * sc * 1.05f)) return 0;
+    g_vitaRoomsFogCulled++;
+    return 1;
+}
+#endif
+
 /**
  * Address: 7F0B5FAC
  *
@@ -2442,6 +2486,9 @@ s32 bgLoadRoomVtxData(s32 roomnum, u8 *dst, s32 len)
 
     room->vertices = (Vtx *)dst;
     room->usize_point_index_binary = result;
+#if defined(__vita__)
+    bgVitaRoomBoundsCompute(roomnum, (Vtx *)dst, result / (s32)sizeof(Vtx));
+#endif
 
     return result;
 }
@@ -2946,6 +2993,9 @@ Gfx *bgRenderRoomPrimary(Gfx *gdl, s32 room_index)
         }
         else
         {
+            #if defined(__vita__)
+            if (bgVitaRoomBeyondFog(room_index)) return gdl;
+#endif
             gdl = applyRoomMatrixToDisplayList(gdl, room_index);
 
 #if defined(PORT)
@@ -2991,6 +3041,9 @@ Gfx *bgRenderRoomSecondary(Gfx *gdl, s32 room_index)
     {
         if (g_BgRoomInfo[room_index].model_bin_loaded != 0)
         {
+            #if defined(__vita__)
+            if (bgVitaRoomBeyondFog(room_index)) return gdl;
+#endif
             gdl = applyRoomMatrixToDisplayList(gdl, room_index);
 
 #if defined(PORT)

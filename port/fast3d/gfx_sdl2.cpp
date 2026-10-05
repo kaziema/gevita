@@ -10,6 +10,7 @@
 #include "input.h"
 
 extern "C" void videoRequestQuit(const char *why);   // port/src/video.c (D344)
+extern "C" int videoVitaMsaaMode(void);              // port/src/video.c
 
 static SDL_Window* wnd;
 static SDL_GLContext ctx;
@@ -30,6 +31,7 @@ static void (*on_fullscreen_changed_callback)(bool is_now_fullscreen);
 // fast3d's internal busy-wait sync is disabled to avoid double-pacing. The
 // GL swap still honors display vsync (vsync_enabled below).
 static int target_fps = 0;
+static int s_vitaWantInterval = 1;   /* swap interval requested by Video.VSync */
 static uint64_t previous_time;
 static uint64_t qpc_freq;
 
@@ -100,7 +102,13 @@ static void gfx_sdl_init(const struct GfxWindowInitSettings *set) {
      * 960x544 here is the Vita's actual screen size, not a window size. */
     sceIoMkdir("ux0:data/GoldenEye007/shader_cache", 0777);
     vglSetParamBufferSize(6 * 1024 * 1024);
-    vglInitWithCustomThreshold(0, 960, 544, 32 * 1024 * 1024, 0, 0, 0, SCE_GXM_MULTISAMPLE_4X); // leave RAM for game thread stacks
+    {
+        static const SceGxmMultisampleMode kMsaa[3] = { SCE_GXM_MULTISAMPLE_NONE, SCE_GXM_MULTISAMPLE_2X, SCE_GXM_MULTISAMPLE_4X };
+        int m = videoVitaMsaaMode();
+        vglInitWithCustomThreshold(0, 960, 544, 32 * 1024 * 1024, 0, 0, 0, kMsaa[m]); // leave RAM for game thread stacks
+        sysLogPrintf(LOG_INFO, "[video] vitaGL MSAA %s", m == 2 ? "4x" : m == 1 ? "2x" : "off");
+        vglSetupRuntimeShaderCompiler(SHARK_OPT_UNSAFE, 1, 0, 1);   /* fast math/int; full float precision */
+    }
     window_width = 960;
     window_height = 544;
 #endif
@@ -482,7 +490,31 @@ static inline void sync_framerate_with_timer(void) {
  * on buffer-exchange drivers (Mesa, WSLg) and yields a black capture. */
 extern "C" void (*gfx_pre_swap_hook)(void) = NULL;
 
+#if defined(__vita__)
+#include <psp2/kernel/processmgr.h>
+/* Per-frame pacing/swap time, drained by the [perf] log in libultra.c. */
+static uint64_t s_tPace, s_tSwap;
+extern "C" void vitaSwapTimesTake(unsigned *paceUs, unsigned *swapUs) {
+    *paceUs = (unsigned)s_tPace; *swapUs = (unsigned)s_tSwap;
+    s_tPace = s_tSwap = 0;
+}
+#endif
+
 static void gfx_sdl_swap_buffers_begin(void) {
+#if defined(__vita__)
+    /* With vsync on, the 60 Hz panel paces frames; a second timer clock beats against it and doubles frames. */
+    uint64_t t0 = sceKernelGetProcessTimeWide();
+    if (target_fps && !vsync_enabled) {
+        sync_framerate_with_timer();
+    }
+    uint64_t t1 = sceKernelGetProcessTimeWide();
+    s_tPace += t1 - t0;
+    if (gfx_pre_swap_hook) {
+        gfx_pre_swap_hook();
+    }
+    SDL_GL_SwapWindow(wnd);
+    s_tSwap += sceKernelGetProcessTimeWide() - t1;
+#else
     if (target_fps) {
         sync_framerate_with_timer();
     }
@@ -490,6 +522,7 @@ static void gfx_sdl_swap_buffers_begin(void) {
         gfx_pre_swap_hook();
     }
     SDL_GL_SwapWindow(wnd);
+#endif
 }
 
 static void gfx_sdl_swap_buffers_end(void) {
@@ -504,6 +537,7 @@ static int32_t gfx_sdl_get_target_fps(void) {
     return target_fps;
 }
 
+static bool gfx_sdl_set_swap_interval(int interval);
 static void gfx_sdl_set_target_fps(int fps) {
     /* D186: the pacing wait below runs inline on the game's scheduler thread
      * (libultra.c osSpTaskStartGo -> gfx_run -> swap_buffers_begin), so a low
@@ -515,6 +549,9 @@ static void gfx_sdl_set_target_fps(int fps) {
         fps = 0;
     }
     target_fps = fps;
+#if defined(__vita__)
+    gfx_sdl_set_swap_interval(s_vitaWantInterval);   /* re-derive 1 vs 2 for the new cap */
+#endif
 }
 
 static bool gfx_sdl_can_disable_vsync(void) {
@@ -534,6 +571,10 @@ static int gfx_sdl_get_swap_interval(void) {
 }
 
 static bool gfx_sdl_set_swap_interval(int interval) {
+#if defined(__vita__)
+    s_vitaWantInterval = interval;
+    if (interval == 1 && target_fps > 0 && target_fps <= 30) interval = 2;   /* 30 cap: every other vblank */
+#endif
     const bool success = SDL_GL_SetSwapInterval(interval) >= 0;
     vsync_enabled = success && (interval != 0);
     if (!success) {

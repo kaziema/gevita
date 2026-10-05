@@ -69,6 +69,9 @@ static int cfgDrawDistance      = 250; /* % of authored far clip; 250% is the UI
 static int cfgDrawDistanceAutoFov = 0; /* legacy ini option, no longer exposed in the menu */
 static int cfgLodDistance         = 250; /* % of authored geometry LOD distance; 50/100 in the UI */
 static int cfgLodDistanceAutoFov  = 0; /* legacy ini option, no longer exposed in the menu */
+#if defined(__vita__)
+static int cfgVitaPerfDefaults = 0;   /* bumped once the Vita performance defaults are applied */
+#endif
 static int cfgAniso         = 4;   /* D212: anisotropic filtering samples; 4 = the value fast3d already applied (no visual delta at default) */
 static int cfgSafeAreaCrop  = 1;   /* crop the N64 TV-overscan safe-area margin (visible as black top/bottom bars on PC) instead of showing it; on by default */
 static int cfgFullscreen    = 0;   /* 0 = windowed, 1 = borderless fullscreen   */
@@ -229,6 +232,12 @@ f32 portFovScale = 1.0f;
 s32 portHudScalePercent(void)
 {
     return cfgHudScale;
+}
+
+/* Vita: Video.MSAA picks vitaGL's display multisample mode at boot (0 none, 1 2x, 2 4x). */
+int videoVitaMsaaMode(void)
+{
+    return cfgMSAA >= 4 ? 2 : cfgMSAA >= 2 ? 1 : 0;
 }
 
 f32 portNativeAspect(void)
@@ -423,6 +432,9 @@ PD_CONSTRUCTOR static void videoConfigInit(void)
     configRegisterInt("Video.VSync",         &cfgVSync,      0, 1);
     configRegisterInt("Video.FpsCap",        &cfgFpsCap,     0, 1000);
     configRegisterInt("Video.MSAA",          &cfgMSAA,       1, 8);
+#if defined(__vita__)
+    configRegisterInt("Video.VitaPerfDefaults", &cfgVitaPerfDefaults, 0, 99);
+#endif
     configRegisterInt("Video.TextureFilter", &cfgTexFilter,  0, 2);
     configRegisterInt("Video.FixMipTextures", &cfgFixMipTex, 0, 1);
     configRegisterInt("Video.DetailBaseTile", &cfgDetailBaseTile, 0, 1);
@@ -614,6 +626,21 @@ static float vidAvgFPS = 0.f;
 
 int videoInit(void)
 {
+#if defined(__vita__)
+    /* One-time Vita defaults: N64 draw/LOD distance, stock FOV, no MSAA or anisotropy. Later edits stick. */
+    if (cfgVitaPerfDefaults < 1) {
+        cfgDrawDistance = 100;
+        cfgLodDistance = 100;
+        cfgDrawDistanceAutoFov = 0;
+        cfgLodDistanceAutoFov = 0;
+        cfgFovScale = 100;
+        cfgMSAA = 1;
+        cfgAniso = 1;
+        cfgVitaPerfDefaults = 1;
+        configSave();
+        sysLogPrintf(LOG_INFO, "video: applied Vita performance defaults");
+    }
+#endif
     wmAPI = &gfx_sdl;
     renderingAPI = &gfx_opengl_api;
 

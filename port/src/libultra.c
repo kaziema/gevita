@@ -50,6 +50,9 @@
 #include "input.h"
 #include "fs.h"
 #include "romdata.h"
+#if defined(__vita__)
+int sceDisplayWaitVblankStart(void);   /* psp2/display.h */
+#endif
 #include "watchsettings.h"
 #include "crash.h"
 
@@ -354,6 +357,16 @@ static void *portTickThread(void *arg)
             continue;
         }
 
+#if defined(__vita__)
+        if (g_tickIntervalUs == 1000000 / 60) {
+            /* Retrace on the panel's real vblank so game ticks and vsync share one clock. */
+            sceDisplayWaitVblankStart();
+            portPostVIEvent();
+            portServiceTimers();
+            portHeartbeatCheck();
+            continue;
+        }
+#endif
         uint64_t now = sysGetMicroseconds();
         if (!g_nextTickUs) g_nextTickUs = now + g_tickIntervalUs;
 
@@ -1553,7 +1566,7 @@ void osSpTaskStartGo(OSTask *t)
             extern void vitaGfxStatsTake(unsigned *, unsigned *, unsigned *, unsigned *, unsigned *);
             static uint64_t lastEnd, sGap, sRun, sSwap, mGap, mRun, mSwap;
             static unsigned n, sDraws, sTris, sUp, sUpKB, sSw, mDraws, mUpKB;
-            static uint64_t sDrawUs, sTexUs, sVtxUs, winStartUs;
+            static uint64_t sDrawUs, sTexUs, sVtxUs, sPaceUs, sSwapWaitUs, winStartUs;
             uint64_t gap = lastEnd ? t0 - lastEnd : 0, run = tRun - t0, swap = g_lastFrameUs - tRun;
             unsigned d, tr, up, upKB, sw;
             vitaGfxStatsTake(&d, &tr, &up, &upKB, &sw);
@@ -1570,6 +1583,10 @@ void osSpTaskStartGo(OSTask *t)
                 unsigned du, tu, vu;
                 vitaFast3dTimesTake(&du, &tu, &vu);
                 sDrawUs += du; sTexUs += tu; sVtxUs += vu;
+                extern void vitaSwapTimesTake(unsigned *, unsigned *);
+                unsigned pu, su;
+                vitaSwapTimesTake(&pu, &su);
+                sPaceUs += pu; sSwapWaitUs += su;
             }
             if (!winStartUs) winStartUs = t0;
             if (++n == 300) {
@@ -1577,11 +1594,18 @@ void osSpTaskStartGo(OSTask *t)
                 sysLogPrintf(LOG_NOTE, "[perf] avg/max ms: game %.1f/%.1f dl %.1f/%.1f swap %.1f/%.1f | per frame: draws %u (max %u) tris %u shader sw %u tex uploads %u (%u KB, max %u KB)",
                              sGap / 300000.0, mGap / 1000.0, sRun / 300000.0, mRun / 1000.0, sSwap / 300000.0, mSwap / 1000.0,
                              sDraws / 300, mDraws, sTris / 300, sSw / 300, sUp / 300, sUpKB / 300, mUpKB);
-                sysLogPrintf(LOG_NOTE, "[perf] dl split ms/frame: draw submit %.2f tex import %.2f vertex %.2f other %.2f | game thread busy %.1f ms/frame (%.0f%%)",
+                uint64_t named = sDrawUs + sTexUs + sVtxUs + sPaceUs + sSwapWaitUs;
+                {
+                    extern s32 g_vitaRoomsFogCulled;
+                    sysLogPrintf(LOG_NOTE, "[perf] rooms fog-culled %.1f/frame", g_vitaRoomsFogCulled / 300.0);
+                    g_vitaRoomsFogCulled = 0;
+                }
+                sysLogPrintf(LOG_NOTE, "[perf] dl split ms/frame: draw submit %.2f tex import %.2f vertex %.2f pace wait %.2f swap/vsync %.2f other cpu %.2f | game thread busy %.1f ms/frame (%.0f%%)",
                              sDrawUs / 300000.0, sTexUs / 300000.0, sVtxUs / 300000.0,
-                             (sRun > sDrawUs + sTexUs + sVtxUs ? sRun - sDrawUs - sTexUs - sVtxUs : 0) / 300000.0,
+                             sPaceUs / 300000.0, sSwapWaitUs / 300000.0,
+                             (sRun > named ? sRun - named : 0) / 300000.0,
                              wall > wait ? (wall - wait) / 300000.0 : 0.0, wall ? 100.0 * (wall > wait ? wall - wait : 0) / wall : 0.0);
-                g_vitaMainWaitUs = 0; winStartUs = 0; sDrawUs = sTexUs = sVtxUs = 0;
+                g_vitaMainWaitUs = 0; winStartUs = 0; sDrawUs = sTexUs = sVtxUs = sPaceUs = sSwapWaitUs = 0;
                 n = 0; sGap = sRun = sSwap = mGap = mRun = mSwap = 0;
                 sDraws = sTris = sUp = sUpKB = sSw = mDraws = mUpKB = 0;
             }
