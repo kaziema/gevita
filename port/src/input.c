@@ -2025,6 +2025,8 @@ unsigned inputComputePad(int idx, signed char *stick_x, signed char *stick_y)
             if (facePlayable) {
                 if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_DOWN)) s_vitaStanceCrouch = 1;
                 if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_UP))   s_vitaStanceCrouch = 0;
+                if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_LEFT))  button |= GE_CONT_C;   /* strafe left */
+                if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) button |= GE_CONT_F;   /* strafe right */
                 vitaDpadIsStance = 1;
             }
         }
