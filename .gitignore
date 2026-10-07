@@ -188,3 +188,12 @@ build-pyinst/
 # Local working junk (frame captures, timerun state, PPM dumps) - moved here
 # from repo root / scratch on 2026-09-18; never commit.
 /local/
+
+# Vita build outputs
+/build-vita/
+/GE007Vita.elf
+/GE007Vita.elf.unstripped.elf
+/GE007Vita.velf
+/GE007Vita.vpk
+/eboot.bin
+/param.sfo
