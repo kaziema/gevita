@@ -197,3 +197,4 @@ build-pyinst/
 /GE007Vita.vpk
 /eboot.bin
 /param.sfo
+*.sha256
