@@ -14,10 +14,6 @@ The full single-player campaign has been played start to finish on a Vita,
 end credits included. It still has rough edges, listed under
 [Status](#status). Free to download, build on and modify (you bring the ROM).
 
-**This is an early build.** Expect bugs, missing pieces, and changes between
-versions. See [Status](#status) for what works today and
-[Roadmap](#roadmap) for what's next.
-
 > [!IMPORTANT]
 > **You must supply your own GoldenEye 007 ROM.** This repository contains no
 > Nintendo code or assets, and no ROM. Nothing here is distributable as a
@@ -276,16 +272,6 @@ This project stands entirely on other people's shoulders:
 
 - **[kaziema](https://github.com/kaziema)**: PS Vita port
 - **vizer**, **midnightneon** (mano), **mikey**, **saturn** and **ben**: testing, logs, and full campaign runs
-
-**Vendored / adapted code**
-
-- `port/fast3d/`: the software RSP, from the PD port. It originates with the
-  [Ship of Harkinian](https://github.com/HarbourMasters) / libultraship fast3d
-  (Emill, MaikelChan; MIT, see `port/fast3d/LICENSE.txt`), which descends
-  from [sm64-port](https://github.com/sm64-port/sm64-port)'s fast3d and audio
-  mixer.
-- [vitaGL](https://github.com/Rinnegatamante/vitaGL), [SDL2](https://libsdl.org)
-  and [zlib](https://zlib.net).
 
 If you're one of these people reading this, thank you!
 
