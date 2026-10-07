@@ -23,6 +23,23 @@
 
 static SDL_AudioDeviceID dev = 0;
 
+#if defined(__vita__)
+/* Vita: resample GE's 22050 Hz mix to 48000 Hz so capture tools get the standard rate. */
+#define VITA_OUT_RATE 48000
+static SDL_AudioStream *s_resample = NULL;
+#endif
+
+/* SDL queue depth in source (22050 Hz) bytes. */
+static u32 queuedSrcBytes(void)
+{
+    if (!dev) return 0;
+    u32 q = SDL_GetQueuedAudioSize(dev);
+#if defined(__vita__)
+    q = (u32)((u64)q * 22050u / VITA_OUT_RATE) & ~3u;
+#endif
+    return q;
+}
+
 /* src/audi.c: g_FrameSize + EXTRA_SAMPLES + 0x10, the exact sample count
  * info->data is allocated for (audi.c:388). Zero until amCreateAudioManager
  * has run. Used by the D204/F4 oversize guard below. */
@@ -93,7 +110,16 @@ int audioInit(void)
         return -1;
     }
     SDL_AudioSpec want = {0};
+#if defined(__vita__)
+    want.freq     = VITA_OUT_RATE;
+    s_resample = SDL_NewAudioStream(AUDIO_S16SYS, 2, 22050, AUDIO_S16SYS, 2, VITA_OUT_RATE);
+    if (!s_resample) {
+        sysLogPrintf(LOG_ERROR, "audioInit: SDL_NewAudioStream: %s", SDL_GetError());
+        return -1;
+    }
+#else
     want.freq     = 22050; /* GE's OUTPUT_RATE (src/audi.c) */
+#endif
     want.format   = AUDIO_S16SYS;
     want.channels = 2;
     want.samples  = (u16)bufferSize;
@@ -111,11 +137,14 @@ int audioInit(void)
 void audioDestroy(void)
 {
     if (dev) { SDL_CloseAudioDevice(dev); dev = 0; }
+#if defined(__vita__)
+    if (s_resample) { SDL_FreeAudioStream(s_resample); s_resample = NULL; }
+#endif
 }
 
 s32 audioGetSamplesBuffered(void)
 {
-    return dev ? (SDL_GetQueuedAudioSize(dev) / 4) : 0;
+    return (s32)(queuedSrcBytes() / 4);
 }
 
 /*
@@ -144,7 +173,7 @@ s32 audioGetSamplesBuffered(void)
  */
 u32 audioGetAiLengthBytes(void)
 {
-    u32 queued = dev ? SDL_GetQueuedAudioSize(dev) : 0;
+    u32 queued = queuedSrcBytes();
 
     if (d204OldMode()) {
         return queued; /* pre-fix behaviour, for A/B measurement only */
@@ -313,7 +342,15 @@ void audioSetNextBuffer(const s16 *buf, u32 len)
 
     if (dev && buf && len) {
         if (audioGetSamplesBuffered() < queueLimit) {
+#if defined(__vita__)
+            static Uint8 out[16384];
+            int got;
+            SDL_AudioStreamPut(s_resample, buf, (int)len);
+            while ((got = SDL_AudioStreamGet(s_resample, out, sizeof(out))) > 0)
+                SDL_QueueAudio(dev, out, (Uint32)got);
+#else
             SDL_QueueAudio(dev, buf, len);
+#endif
             lastBufferBytes = len;
         } else if (dropCount++ % 128 == 0) {
             /* D204/F3: dropping here used to be silent, so overproduction

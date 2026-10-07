@@ -209,6 +209,7 @@ $(TARGET).vpk: $(TARGET).velf check-livearea
 		-a livearea/bg.png=sce_sys/livearea/contents/bg.png \
 		-a livearea/startup.png=sce_sys/livearea/contents/startup.png \
 		-a livearea/template.xml=sce_sys/livearea/contents/template.xml
+	shasum -a 256 $(TARGET).vpk > $(TARGET).vpk.sha256
 
 %.velf: %.elf
 	cp $< $<.unstripped.elf
