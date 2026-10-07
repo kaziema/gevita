@@ -99,7 +99,7 @@ Done so far on the Vita side:
 
 **Known issues:**
 
-- Performance is not a locked 60 fps yet. Busy scenes and big open levels drop below it. The renderer is CPU-bound on the Vita.
+- Runs at 60 fps. Busy scenes and big open levels can drop to around 40 fps.
 - Glass on Facility is missing its reflection.
 - With **Native widescreen** on, the picture shows black bars on the sides.
 - The **Control Style** watch option is locked to one layout for now, since the Vita button layout is set in the port.
