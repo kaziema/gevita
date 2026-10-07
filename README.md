@@ -288,9 +288,8 @@ many other N64 decompilation and native-port repositories on GitHub:
   itself a fork of the public
   [GoldenEye 007 decompilation](https://github.com/n64decomp/007) (see
   [`NOTICE`](NOTICE) for what that includes).
-- No official logos, box art, or marketing assets are used. "GoldenEye 007",
-  "007", "James Bond" and related marks belong to their respective owners
-  (Nintendo, Microsoft/Rare, MGM, Danjaq, EON Productions).
+- "GoldenEye 007", "007", "James Bond" and related marks belong to their
+  respective owners (Nintendo, Microsoft/Rare, MGM, Danjaq, EON Productions).
 - I don't condone piracy. Bring your own legally obtained copy.
 
 This project is **not affiliated with, endorsed by, or sponsored by** Nintendo,
