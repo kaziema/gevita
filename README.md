@@ -11,8 +11,8 @@ for Vita hardware. It runs the original N64 game from its reconstructed
 source code.
 
 The full single-player campaign has been played start to finish on a Vita,
-end credits included. It still has rough edges, listed under
-[Status](#status). Free to download, build on and modify (you bring the ROM).
+end credits included. Known issues are listed under [Status](#status). Free
+to download, build on and modify (you bring the ROM).
 
 > [!IMPORTANT]
 > **You must supply your own GoldenEye 007 ROM.** This repository contains no
@@ -63,7 +63,7 @@ app doesn't touch it.
 
 ## Status
 
-**Playable, with known rough edges.** All 20 solo missions and the ending
+**Playable.** All 20 solo missions and the ending
 credits have been played through on Vita hardware by testers. Feedback and
 logs are very welcome.
 
