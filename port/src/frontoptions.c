@@ -452,6 +452,8 @@ void frontOptionsMenuInterface(void)
                        cursor_h_pos >= bx0 - 4 && cursor_h_pos <= BAR_X1 + 4) {
                 optionsRowSetFraction(i, ((double)cursor_h_pos - bx0) / (BAR_X1 - bx0));
                 s_dragRow = i;
+            } else if (optionsRowIsPadBind(i)) {
+                optionsRowBeginPadBind(i);
             } else if (optionsRowIsBind(i)) {
                 /* D395: pad A/X may navigate the keyboard/mouse binding
                  * pages but cannot enter a modal that only a key can finish.
@@ -740,6 +742,9 @@ Gfx *frontOptionsMenuDraw(Gfx *DL)
                      optionsBindingCaptureActive()
                          ? "Press key/mouse  B/ESC cancel  DEL clear\n"
                          : "Keys/mouse only  Enter: bind  B: back\n", INK_DIM);
+        } else if (strcmp(optionsRowLabel(activeHeader()), "BUTTONS") == 0 &&
+                   optionsBindingCaptureActive()) {
+            DL = ink(DL, ROW_X, rowY(s_rowN + 1), "Press a button  Start: cancel\n", INK_DIM);
         } else if (s_rowTotal > ROWS_PER_PAGE) {
             /* D406b: bottom hint on every page of a multi-page section (11
              * rows per page leaves the last line of the paper for it). */

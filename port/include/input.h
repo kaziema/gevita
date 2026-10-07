@@ -60,6 +60,11 @@ void inputSuspendForOverlay(void);
  * navigation). Unaffected by the overlay's pad-swallow, which happens at our
  * logic layer, not SDL's. No pad open -> 0. */
 int   inputPadButton(int idx, SDL_GameControllerButton b);
+#if defined(__vita__)
+int   inputVitaBindable(int btn);
+int   inputVitaBindSet(const char *key, int btn);
+const char *inputVitaButtonName(int btn);
+#endif
 short inputPadAxis(int idx, SDL_GameControllerAxis a);
 
 /* Queue a mouse-wheel weapon-cycle input (one short A-button press). Sign is

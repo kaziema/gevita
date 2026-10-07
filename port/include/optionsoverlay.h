@@ -72,6 +72,8 @@ const char *optionsRowLabel(int i);
 int         optionsRowIsSlider(int i);
 int         optionsRowIsBind(int i);
 void        optionsRowBeginBind(int i);
+int         optionsRowIsPadBind(int i);
+void        optionsRowBeginPadBind(int i);
 int         optionsRowIsBondChooser(int i); /* D353: the Bond-file chooser row
                                               (front options screen only) */
 /* D356: 1 when this row's value lives in the selected save file (content

@@ -292,6 +292,67 @@ static int connectedMask   = 0x1;   /* controller 0 always present */
 static SDL_GameController *pads[MAX_PADS];
 #if defined(__vita__)
 static int padShoulderPrev[MAX_PADS];   /* Triangle/Square edge state for weapon cycling */
+
+/* Rebindable Vita gameplay buttons; menus keep Cross/Circle. */
+enum { VB_FIRE, VB_AIM, VB_ACTION, VB_RELOAD, VB_NEXT, VB_PREV,
+       VB_CROUCH, VB_STAND, VB_STRAFE_L, VB_STRAFE_R, VB_COUNT };
+static const char *const kVitaBindKey[VB_COUNT] = {
+    "Input.Vita.Fire", "Input.Vita.Aim", "Input.Vita.Action", "Input.Vita.Reload",
+    "Input.Vita.NextWeapon", "Input.Vita.PrevWeapon", "Input.Vita.Crouch",
+    "Input.Vita.Stand", "Input.Vita.StrafeLeft", "Input.Vita.StrafeRight",
+};
+static int vitaBind[VB_COUNT] = {
+    SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, SDL_CONTROLLER_BUTTON_LEFTSHOULDER,
+    SDL_CONTROLLER_BUTTON_A, SDL_CONTROLLER_BUTTON_X,
+    SDL_CONTROLLER_BUTTON_Y, SDL_CONTROLLER_BUTTON_B,
+    SDL_CONTROLLER_BUTTON_DPAD_DOWN, SDL_CONTROLLER_BUTTON_DPAD_UP,
+    SDL_CONTROLLER_BUTTON_DPAD_LEFT, SDL_CONTROLLER_BUTTON_DPAD_RIGHT,
+};
+
+static int vitaHeld(SDL_GameController *pad, int a)
+{
+    return pad && SDL_GameControllerGetButton(pad, (SDL_GameControllerButton)vitaBind[a]);
+}
+
+int inputVitaBindable(int btn)
+{
+    return btn >= 0 && btn < SDL_CONTROLLER_BUTTON_MAX &&
+           btn != SDL_CONTROLLER_BUTTON_BACK && btn != SDL_CONTROLLER_BUTTON_START &&
+           btn != SDL_CONTROLLER_BUTTON_GUIDE;
+}
+
+/* Assign btn to the action; an action already on btn takes the old button. */
+int inputVitaBindSet(const char *key, int btn)
+{
+    if (!inputVitaBindable(btn)) return 0;
+    for (int a = 0; a < VB_COUNT; a++) {
+        if (strcmp(kVitaBindKey[a], key)) continue;
+        for (int b = 0; b < VB_COUNT; b++)
+            if (b != a && vitaBind[b] == btn) vitaBind[b] = vitaBind[a];
+        vitaBind[a] = btn;
+        return 1;
+    }
+    return 0;
+}
+
+const char *inputVitaButtonName(int btn)
+{
+    switch (btn) {
+    case SDL_CONTROLLER_BUTTON_A: return "Cross";
+    case SDL_CONTROLLER_BUTTON_B: return "Circle";
+    case SDL_CONTROLLER_BUTTON_X: return "Square";
+    case SDL_CONTROLLER_BUTTON_Y: return "Triangle";
+    case SDL_CONTROLLER_BUTTON_LEFTSTICK: return "L3";
+    case SDL_CONTROLLER_BUTTON_RIGHTSTICK: return "R3";
+    case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: return "L";
+    case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: return "R";
+    case SDL_CONTROLLER_BUTTON_DPAD_UP: return "D-pad up";
+    case SDL_CONTROLLER_BUTTON_DPAD_DOWN: return "D-pad down";
+    case SDL_CONTROLLER_BUTTON_DPAD_LEFT: return "D-pad left";
+    case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: return "D-pad right";
+    default: return "?";
+    }
+}
 #endif
 static int padBPrev[MAX_PADS];          /* B/Y edges; track through menus too */
 static int padYPrev[MAX_PADS];
@@ -1362,10 +1423,15 @@ unsigned inputComputePad(int idx, signed char *stick_x, signed char *stick_y)
      * input" pattern. Controllers 1-3 are untouched. */
     if (idx == 0 && optionsOverlayIsOpen()) {
         const Uint8 *overlayKs = SDL_GetKeyboardState(NULL);
+#if defined(__vita__)
+        s_useHeldPrev = vitaHeld(pads[0], VB_ACTION);
+        s_reloadHeldPrev = vitaHeld(pads[0], VB_RELOAD);
+#else
         s_useHeldPrev = actHeld(overlayKs, IA_CANCEL) ||
             (pads[0] && SDL_GameControllerGetButton(pads[0], SDL_CONTROLLER_BUTTON_A));
         s_reloadHeldPrev = actHeld(overlayKs, IA_RELOAD) ||
             (pads[0] && SDL_GameControllerGetButton(pads[0], SDL_CONTROLLER_BUTTON_X));
+#endif
         s_crouchLatch = 0;
         s_crouchHeldPrev = 0;
         inputDropCrouch();
@@ -1543,8 +1609,13 @@ unsigned inputComputePad(int idx, signed char *stick_x, signed char *stick_y)
          * interaction with NO fallback; R and pad X only reload. Their
          * combined edges prevent a held input from repeatedly using a door.
          * In menus/watch/tank the pad keeps native accept/cancel buttons. */
+#if defined(__vita__)
+        int padUse = vitaHeld(pads[0], VB_ACTION);
+        int padReload = vitaHeld(pads[0], VB_RELOAD);
+#else
         int padUse = pads[0] && SDL_GameControllerGetButton(pads[0], SDL_CONTROLLER_BUTTON_A);
         int padReload = pads[0] && SDL_GameControllerGetButton(pads[0], SDL_CONTROLLER_BUTTON_X);
+#endif
         int useNow = scriptIsActive() ? s_scriptUse : (actHeld(ks, IA_CANCEL) || padUse);
         int reloadNow = scriptIsActive() ? s_scriptReload : (actHeld(ks, IA_RELOAD) || padReload);
         int playable = inputCanUseGameplayActions(menuMode);
@@ -1995,38 +2066,44 @@ unsigned inputComputePad(int idx, signed char *stick_x, signed char *stick_y)
             button |= GE_CONT_R;
         /* Wave A: southpaw swaps the fire (G) and grenade (R) trigger actions
          * (right<->left trigger), after the raw edges above are captured. */
+#if !defined(__vita__) /* Vita swaps after L/R below */
         if (padSouthpaw) {
             int t = button;
             button = (t & ~(GE_CONT_G | GE_CONT_R))
                    | ((t & GE_CONT_G) ? GE_CONT_R : 0)
                    | ((t & GE_CONT_R) ? GE_CONT_G : 0);
         }
+#endif
 #if defined(__vita__)
-        /* Vita: R fire, L aim. In play Cross = use and Square = reload (dedicated paths above),
-         * Triangle/Circle = next/prev weapon, D-pad down/up = crouch/stand. Menus: Cross/Circle = accept/back. */
-        if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER))
-            button |= GE_CONT_G;
-        if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_LEFTSHOULDER))
-            button |= GE_CONT_R;
+        /* Vita: gameplay buttons from vitaBind (action/reload use the paths above). Menus: Cross/Circle = accept/back. */
+        if (vitaHeld(pad, VB_FIRE)) button |= GE_CONT_G;
+        if (vitaHeld(pad, VB_AIM))  button |= GE_CONT_R;
+        if (padSouthpaw) {
+            int t = button;
+            button = (t & ~(GE_CONT_G | GE_CONT_R))
+                   | ((t & GE_CONT_G) ? GE_CONT_R : 0)
+                   | ((t & GE_CONT_R) ? GE_CONT_G : 0);
+        }
         {
             int facePlayable = idx == 0 && inputCanUseGameplayActions(padMenuMode);
             int crossNow = SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_A);
             int circleNow = SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_B);
-            int triNow = SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_Y);
+            int nextNow = vitaHeld(pad, VB_NEXT);
+            int prevNow = vitaHeld(pad, VB_PREV);
             int *prev = &padShoulderPrev[idx];
             if (facePlayable) {
-                if (triNow && !(*prev & 1))    button |= GE_CONT_A;              /* next weapon */
-                if (circleNow && !(*prev & 2)) button |= GE_CONT_A | GE_CONT_G;  /* prev weapon */
+                if (nextNow && !(*prev & 1)) button |= GE_CONT_A;              /* next weapon */
+                if (prevNow && !(*prev & 2)) button |= GE_CONT_A | GE_CONT_G;  /* prev weapon */
             } else if (g_PlayerIsInTank != 1 && g_BondCanEnterTank == 0) {
                 if (crossNow)  button |= GE_CONT_A;
                 if (circleNow) button |= GE_CONT_B;
             }
-            *prev = (triNow ? 1 : 0) | (circleNow ? 2 : 0);
+            *prev = (nextNow ? 1 : 0) | (prevNow ? 2 : 0);
             if (facePlayable) {
-                if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_DOWN)) s_vitaStanceCrouch = 1;
-                if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_UP))   s_vitaStanceCrouch = 0;
-                if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_LEFT))  button |= GE_CONT_C;   /* strafe left */
-                if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) button |= GE_CONT_F;   /* strafe right */
+                if (vitaHeld(pad, VB_CROUCH))   s_vitaStanceCrouch = 1;
+                if (vitaHeld(pad, VB_STAND))    s_vitaStanceCrouch = 0;
+                if (vitaHeld(pad, VB_STRAFE_L)) button |= GE_CONT_C;
+                if (vitaHeld(pad, VB_STRAFE_R)) button |= GE_CONT_F;
                 vitaDpadIsStance = 1;
             }
         }
@@ -2684,6 +2761,10 @@ PD_CONSTRUCTOR static void inputConfigInit(void)
      * configSave; BindingsVersion marks the one-time stale-default migration. */
     configRegisterInt("Input.BindingsVersion", &bindsVersion, 0, 3);
     configRegisterInt("Input.CrouchMode", &crouchMode, 0, 1);
+#if defined(__vita__)
+    for (int a = 0; a < VB_COUNT; a++)
+        configRegisterInt(kVitaBindKey[a], &vitaBind[a], 0, SDL_CONTROLLER_BUTTON_MAX - 1);
+#endif
 
     /* Seed fresh ini files with the REAL PC binding strings. Older ini
      * values are migrated at inputInit after configLoad, exactly once. */

@@ -658,6 +658,7 @@ int videoInit(void)
 
 #if defined(__vita__)
     /* Always native size; ignore saved window values. */
+    cfgVSync = 1;   /* frame timing follows the display */
     cfgWinW = cfgWinH = 0;
     cfgFullscreen = 0;
     cfgWinMax = 0;

@@ -80,7 +80,8 @@ extern s16   viGetY(void);
 /* ------------------------------------------------------------------------ */
 
 enum { ROW_TOGGLE, ROW_SLIDER, ROW_ENUM, ROW_MSAA, ROW_RES, ROW_ACTION, ROW_FPSCAP,
-       ROW_HEADER, ROW_BOND_FILE, ROW_BIND /* key / mouse-button capture */ };
+       ROW_HEADER, ROW_BOND_FILE, ROW_BIND /* key / mouse-button capture */,
+       ROW_PADBIND /* Vita button capture */ };
 
 /* D346: wording pass -- Nightdive/Turok + PD-port conventions: title-case
  * On/Off, no all-caps value strings. Display-only; config stores 0/1 either way. */
@@ -192,6 +193,7 @@ static struct Row rows[] = {
      * watchSettingsActiveFolder(). All rows use designated initializers
      * (D351 class). */
     { .key="__HdrInput", .label="INPUT", .kind=ROW_HEADER },
+#if !defined(__vita__) /* no mouse on Vita */
     { .key="Input.MouseSensitivity", .label="Mouse horizontal sensitivity", .kind=ROW_SLIDER, .step=5 }, /* calibrated UI midpoint = raw 100 */
     /* Wave A (v0.5.0, CONTROLLER-INPUT-PLAN item 6): the pre-existing
      * Input.MouseYScale key (extra vertical/pitch sensitivity, %) finally gets
@@ -199,6 +201,7 @@ static struct Row rows[] = {
      * Row only -- input.c already applies it (mouseYScale). */
     { .key="Input.MouseYScale", .label="Mouse vertical sensitivity", .kind=ROW_SLIDER, .step=5 },
     { .key="Input.MouseInvertY", .label="Invert look (mouse)", .kind=ROW_TOGGLE, .step=1, .names=kOnOff },
+#endif
     /* Input.PdMouseAim (findings D332): the Perfect Dark port's mouse-aim
      * model. The port only accumulates the mouse; the game's own crosshair
      * integrator is driven by the port-supplied turn with PD's near-zero damp
@@ -233,15 +236,35 @@ static struct Row rows[] = {
     { .key="Input.PadLookSensY", .label="Y axis look sensitivity (controller)", .kind=ROW_SLIDER, .step=5 },
     { .key="Input.PadLookSmooth", .label="Look smoothing (controller)", .kind=ROW_SLIDER, .step=1, .dispMax=10 },
     { .key="Input.PadSouthpaw", .label="Southpaw", .kind=ROW_TOGGLE, .step=1, .names=kOnOff },
+#if !defined(__vita__) /* no analog triggers on Vita */
     { .key="Input.PadTriggerPct", .label="Trigger threshold", .kind=ROW_SLIDER, .step=1 },
+#endif
     /* v0.4.0 M3 (modern options wave, D371): the GEPD mouse-injector
      * key-layout preset (docs/dev/notes/GEPORT-REFERENCE-DEEPDIVE.md
      * section 7.1) + the crouch bind's fire mode. Turok standard: these are
      * control bindings, so they live in INPUT -- no provenance bucket.
      * D374: the GEPD layout is the default (a mouse FPS layout is the
      * natural default; the N64 had no keyboard); crouch defaults to hold. */
+#if !defined(__vita__) /* D-pad stance on Vita */
     { .key="Input.CrouchMode", .label="Crouch mode", .kind=ROW_ENUM, .step=1, .names=kHold },
+#endif
     { .key="__ResetInput", .label="Reset to defaults", .kind=ROW_ACTION },
+#if defined(__vita__)
+    { .key="__OpenVitaButtons", .label="Buttons...", .kind=ROW_ACTION },
+
+    { .key="__HdrVitaButtons", .label="BUTTONS", .kind=ROW_HEADER },
+    { .key="Input.Vita.Fire", .label="Fire", .kind=ROW_PADBIND },
+    { .key="Input.Vita.Aim", .label="Aim", .kind=ROW_PADBIND },
+    { .key="Input.Vita.Action", .label="Action", .kind=ROW_PADBIND },
+    { .key="Input.Vita.Reload", .label="Reload", .kind=ROW_PADBIND },
+    { .key="Input.Vita.NextWeapon", .label="Next weapon", .kind=ROW_PADBIND },
+    { .key="Input.Vita.PrevWeapon", .label="Previous weapon", .kind=ROW_PADBIND },
+    { .key="Input.Vita.Crouch", .label="Crouch", .kind=ROW_PADBIND },
+    { .key="Input.Vita.Stand", .label="Stand up", .kind=ROW_PADBIND },
+    { .key="Input.Vita.StrafeLeft", .label="Strafe left", .kind=ROW_PADBIND },
+    { .key="Input.Vita.StrafeRight", .label="Strafe right", .kind=ROW_PADBIND },
+    { .key="__ResetVitaButtons", .label="Reset to defaults", .kind=ROW_ACTION },
+#else
     { .key="__OpenBindings", .label="Bindings...", .kind=ROW_ACTION },
 
     /* D388: nested Input -> Bindings -> two short pages, each with a reset.
@@ -269,6 +292,7 @@ static struct Row rows[] = {
     { .key="Input.Bind.Reload", .label="Reload", .kind=ROW_BIND },
     { .key="Input.Bind.Crouch", .label="Crouch", .kind=ROW_BIND },
     { .key="__ResetActionKeys", .label="Reset to defaults", .kind=ROW_ACTION },
+#endif
 
     { .key="__HdrGameplay", .label="GAMEPLAY", .kind=ROW_HEADER },
     /* D356 exposure filter (menu surface only, the D181/D216/D304 pattern --
@@ -309,7 +333,9 @@ static struct Row rows[] = {
      * discoverable in-game way to exit, a real gap on Deck/controller-only
      * setups. Not config-backed (like __Resolution); activating it exits
      * the same way video.c's SDL_QUIT/Alt+F4 handlers already do. */
+#if !defined(__vita__) /* exit from the PS button on Vita */
     { .key="__QuitToDesktop", .label="Quit to desktop", .kind=ROW_ACTION },
+#endif
 
     /* D388: Gameplay -> HUD collects both profile HUD visibility and global
      * crosshair/scale controls. Its reset honours each row's own scope. */
@@ -332,7 +358,9 @@ static struct Row rows[] = {
     { .key="__HdrGraphics", .label="GRAPHICS", .kind=ROW_HEADER },
     { .key="Video.MSAA", .label="Anti-aliasing", .kind=ROW_MSAA, .restart=1 },
     { .key="Video.TextureFilter", .label="Texture filter", .kind=ROW_ENUM, .step=1, .names=kTexFilter },
+#if !defined(__vita__) /* vitaGL ignores anisotropy */
     { .key="Video.Anisotropy", .label="Anisotropic filtering", .kind=ROW_SLIDER, .step=1, .unit="x" },
+#endif
     { .key="Video.FovScale", .label="FOV scale", .kind=ROW_SLIDER, .step=5, .unit="%" },
     /* D334: native widescreen (world projected at the window aspect, Hor+).
      * While on, "Widescreen auto FOV" has no effect (it was the stretch-era
@@ -380,7 +408,9 @@ static struct Row rows[] = {
     { .key="Video.Fullscreen", .label="Fullscreen", .kind=ROW_TOGGLE, .step=1, .names=kOnOff },
     { .key="__Resolution", .label="Resolution", .kind=ROW_RES },
 #endif
+#if !defined(__vita__) /* always on: timing follows the display */
     { .key="Video.VSync", .label="VSync", .kind=ROW_TOGGLE, .step=1, .names=kOnOff },
+#endif
     { .key="Video.FpsCap", .label="Frame rate cap", .kind=ROW_FPSCAP },
     { .key="Video.DisplayFPS", .label="Show FPS", .kind=ROW_TOGGLE, .step=1, .names=kOnOff },
     { .key="__ResetVideo", .label="Reset to defaults", .kind=ROW_ACTION },
@@ -410,6 +440,7 @@ int optionsRowHeaderParent(int i)
     if (!strcmp(key, "__HdrMoveKeys") || !strcmp(key, "__HdrActionKeys"))
         return rowIndexByKey("__HdrBindings");
     if (!strcmp(key, "__HdrHUD")) return rowIndexByKey("__HdrGameplay");
+    if (!strcmp(key, "__HdrVitaButtons")) return rowIndexByKey("__HdrInput");
     return -1;
 }
 
@@ -421,6 +452,7 @@ int optionsRowChildHeader(int i)
     if (!strcmp(key, "__OpenMoveKeys")) return rowIndexByKey("__HdrMoveKeys");
     if (!strcmp(key, "__OpenActionKeys")) return rowIndexByKey("__HdrActionKeys");
     if (!strcmp(key, "__OpenHud")) return rowIndexByKey("__HdrHUD");
+    if (!strcmp(key, "__OpenVitaButtons")) return rowIndexByKey("__HdrVitaButtons");
     return -1;
 }
 
@@ -460,9 +492,67 @@ static void bindingBegin(struct Row *r)
     SDL_AtomicSet(&s_bindCaptureActive, 1);
 }
 
+/* Vita button capture: row index + 1 while recording, 0 when idle. */
+static SDL_atomic_t s_padBindRow;
+static int s_padBindWaitRelease = 0;
+static int s_padBindHold = 0;   /* swallow input until the bound button is released */
+
+static void padBindBegin(struct Row *r)
+{
+#if defined(__vita__)
+    if (!r || r->kind != ROW_PADBIND) return;
+    s_padBindWaitRelease = 1;
+    SDL_AtomicSet(&s_padBindRow, (int)(r - rows) + 1);
+#else
+    (void)r;
+#endif
+}
+
+static int padAnyButton(void)
+{
+    for (int b = 0; b < SDL_CONTROLLER_BUTTON_MAX; b++)
+        if (inputPadButton(0, (SDL_GameControllerButton)b)) return 1;
+    return 0;
+}
+
+/* 1 = swallow menu input this tick. Start cancels. */
+static int padBindTick(void)
+{
+#if defined(__vita__)
+    int ri = SDL_AtomicGet(&s_padBindRow) - 1;
+    if (ri < 0) {
+        if (s_padBindHold && padAnyButton()) return 1;
+        s_padBindHold = 0;
+        return 0;
+    }
+    if (s_padBindWaitRelease) {
+        if (padAnyButton()) return 1;
+        s_padBindWaitRelease = 0;
+    }
+    if (inputPadButton(0, SDL_CONTROLLER_BUTTON_START)) {
+        SDL_AtomicSet(&s_padBindRow, 0);
+        s_padBindHold = 1;
+        return 1;
+    }
+    for (int b = 0; b < SDL_CONTROLLER_BUTTON_MAX; b++) {
+        if (!inputVitaBindable(b) || !inputPadButton(0, (SDL_GameControllerButton)b)) continue;
+        if (inputVitaBindSet(rows[ri].key, b)) {
+            configSave();
+            sysLogPrintf(LOG_INFO, "bind capture: %s = %s", rows[ri].key, inputVitaButtonName(b));
+        }
+        SDL_AtomicSet(&s_padBindRow, 0);
+        s_padBindHold = 1;
+        return 1;
+    }
+    return 1;
+#else
+    return 0;
+#endif
+}
+
 int optionsBindingCaptureActive(void)
 {
-    return SDL_AtomicGet(&s_bindCaptureActive) != 0;
+    return SDL_AtomicGet(&s_bindCaptureActive) != 0 || SDL_AtomicGet(&s_padBindRow) != 0;
 }
 
 int optionsBindingInputBlocked(void)
@@ -508,6 +598,7 @@ int optionsBindingMouseDown(const SDL_MouseButtonEvent *ev)
  * simultaneously trigger menu navigation or a second action. */
 int optionsBindingCaptureTick(void)
 {
+    if (padBindTick()) return 1;
     /* D395: capture only accepts keyboard/mouse. A controller B must be
      * able to cancel a modal entered with a keyboard/mouse; swallow B until
      * release so that the same press cannot also back out of the page. */
@@ -1193,7 +1284,13 @@ static void rowAdjust(struct Row *r, int dir)
         }
         /* Wrap like a normal settings-menu cycle: OFF->2x->4x->8x->OFF, in
          * both directions (left/right click and arrows all roll). */
-        idx = (idx + dir + 4) % 4;
+#if defined(__vita__)
+        const int nMsaa = 3;   /* vitaGL tops out at 4x */
+#else
+        const int nMsaa = 4;
+#endif
+        if (idx >= nMsaa) idx = nMsaa - 1;
+        idx = (idx + dir + nMsaa) % nMsaa;
         rowSet(r, (double)kMsaaSeq[idx]);
         break;
     }
@@ -1227,6 +1324,8 @@ static void rowAdjust(struct Row *r, int dir)
     }
     case ROW_BIND:
         r->bindSlot = (r->bindSlot + dir + INPUT_BIND_SLOTS) % INPUT_BIND_SLOTS;
+        break;
+    case ROW_PADBIND:
         break;
     case ROW_ACTION:
         if (optionsRowChildHeader((int)(r - rows)) >= 0) break; /* link, not a Quit or value */
@@ -1296,16 +1395,37 @@ static const struct { const char *key; double def; } kResetDefaults[] = {
     { "Input.PadSouthpaw",        0 },  /* = 0 (off), Wave A */
     { "Input.PadTriggerPct",     23 },  /* = 23 */
     { "Input.CrouchMode",        0 },   /* = 0 (hold) */
+#if defined(__vita__)
+    { "Input.Vita.Fire",        SDL_CONTROLLER_BUTTON_RIGHTSHOULDER },
+    { "Input.Vita.Aim",         SDL_CONTROLLER_BUTTON_LEFTSHOULDER },
+    { "Input.Vita.Action",      SDL_CONTROLLER_BUTTON_A },
+    { "Input.Vita.Reload",      SDL_CONTROLLER_BUTTON_X },
+    { "Input.Vita.NextWeapon",  SDL_CONTROLLER_BUTTON_Y },
+    { "Input.Vita.PrevWeapon",  SDL_CONTROLLER_BUTTON_B },
+    { "Input.Vita.Crouch",      SDL_CONTROLLER_BUTTON_DPAD_DOWN },
+    { "Input.Vita.Stand",       SDL_CONTROLLER_BUTTON_DPAD_UP },
+    { "Input.Vita.StrafeLeft",  SDL_CONTROLLER_BUTTON_DPAD_LEFT },
+    { "Input.Vita.StrafeRight", SDL_CONTROLLER_BUTTON_DPAD_RIGHT },
+#endif
     /* GRAPHICS (port/src/video.c initializers) */
+#if defined(__vita__)
+    { "Video.MSAA",                 1 },   /* Vita perf default */
+#else
     { "Video.MSAA",                 2 },   /* = 2 */
+#endif
     { "Video.TextureFilter",        1 },   /* = 1 (bilinear) */
     { "Video.Anisotropy",           4 },   /* = 4 */
     { "Video.FovScale",            100 },  /* = 100 */
     { "Video.NativeWidescreen",      1 },  /* = 1 */
     { "Video.WidescreenAuto",        1 },  /* = 1 */
     { "Video.SafeAreaCrop",          1 },  /* = 1 */
+#if defined(__vita__)
+    { "Video.DrawDistance",        100 },  /* Vita perf default */
+    { "Video.LodDistance",         100 },
+#else
     { "Video.DrawDistance",        250 },  /* midpoint: 50/100 */
     { "Video.LodDistance",         250 },  /* midpoint: 50/100 */
+#endif
     { "Video.CrosshairHide",      0 },   /* = 0 (on, N64) */
     { "Video.CrosshairColor",   0 },   /* = 0 (authored red sprite) */
     { "Video.CrosshairRed",   255 },
@@ -1669,7 +1789,10 @@ void optionsOverlayHandleInput(void)
                 } else {
                 struct Row *r = &rows[s_visIdx[s_sel]];
                 int keyConfirm = ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_KP_ENTER];
-                if (r->kind == ROW_BIND && dir > 0 && keyConfirm) {
+                if (r->kind == ROW_PADBIND) {
+                    if (dir > 0 && accept && !rightNav) padBindBegin(r);
+                    adjDir = 0;
+                } else if (r->kind == ROW_BIND && dir > 0 && keyConfirm) {
                     bindingBegin(r);
                     adjDir = 0;
                 } else if (r->kind == ROW_BIND && dir > 0 && accept && !rightNav) {
@@ -1858,6 +1981,13 @@ static void valueText(int i, char *out, int n)
         }
         return;
     }
+#if defined(__vita__)
+    if (r->kind == ROW_PADBIND) {
+        if (SDL_AtomicGet(&s_padBindRow) == i + 1) snprintf(out, n, "Press a button...");
+        else snprintf(out, n, "%s", inputVitaButtonName((int)lround(rowGet(r))));
+        return;
+    }
+#endif
     if (r->kind == ROW_BIND) {
         if (optionsBindingCaptureActive() && i == s_bindCaptureRow)
             snprintf(out, n, "Key/mouse...");
@@ -1873,8 +2003,12 @@ static void valueText(int i, char *out, int n)
         return;
     }
     if (r->kind == ROW_MSAA) {
-        if ((int)lround(v) <= 1) snprintf(out, n, "None");
-        else                     snprintf(out, n, "%dx", (int)lround(v));
+        int m = (int)lround(v);
+#if defined(__vita__)
+        if (m > 4) m = 4;   /* runs as 4x */
+#endif
+        if (m <= 1) snprintf(out, n, "None");
+        else        snprintf(out, n, "%dx", m);
         return;
     }
     if ((r->kind == ROW_TOGGLE || r->kind == ROW_ENUM) && r->names) {
@@ -2209,7 +2343,10 @@ Gfx *optionsOverlayEmit(void)
      * started after CONTROLS: and ran under / beyond the right edge. Reserve
      * two lines in overlayLayout so the footer never covers the last row. */
     const char *help1, *help2;
-    if (optionsBindingCaptureActive()) {
+    if (SDL_AtomicGet(&s_padBindRow) != 0) {
+        help1 = "PRESS A BUTTON";
+        help2 = "START CANCEL";
+    } else if (optionsBindingCaptureActive()) {
         help1 = "PRESS KEY/MOUSE 1-5";
         help2 = "B/ESC CANCEL   DEL CLEAR";
     } else if (s_section < 0) {
@@ -2320,6 +2457,17 @@ int optionsRowIsBind(int i)
 void optionsRowBeginBind(int i)
 {
     bindingBegin(rowAt(i));
+}
+
+int optionsRowIsPadBind(int i)
+{
+    struct Row *r = rowAt(i);
+    return r && r->kind == ROW_PADBIND;
+}
+
+void optionsRowBeginPadBind(int i)
+{
+    padBindBegin(rowAt(i));
 }
 
 /* D353: the explicit Bond-file chooser row (front options screen only). */
